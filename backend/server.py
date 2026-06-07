@@ -222,7 +222,8 @@ def parse_csv_file(content: bytes) -> list:
 
     for enc in ['utf-8', 'latin-1', 'cp1252']:
         try:
-            df = pd.read_csv(io.BytesIO(content), encoding=enc)
+            # index_col=False prevents pandas from using Date column as index when trailing comma exists
+            df = pd.read_csv(io.BytesIO(content), encoding=enc, index_col=False)
             break
         except Exception:
             continue
@@ -231,8 +232,8 @@ def parse_csv_file(content: bytes) -> list:
 
     df.columns = [str(c).strip().lower() for c in df.columns]
 
-    date_col = next((c for c in df.columns if any(x in c for x in ['date', 'posted', 'tran'])), None)
-    desc_col = next((c for c in df.columns if any(x in c for x in ['description', 'details', 'narrative', 'payee', 'memo', 'narration', 'reference', 'particulars'])), None)
+    date_col = next((c for c in df.columns if any(x in c for x in ['date', 'posted', 'tran', 'settlement'])), None)
+    desc_col = next((c for c in df.columns if any(x in c for x in ['description', 'details', 'narrative', 'payee', 'memo', 'narration', 'reference', 'particulars', 'transaction'])), None)
     amount_col = next((c for c in df.columns if c.strip() == 'amount'), None)
     debit_col = next((c for c in df.columns if any(x in c for x in ['debit', 'withdrawal', 'charge', 'dr '])), None)
     credit_col = next((c for c in df.columns if any(x in c for x in ['credit', 'deposit', 'cr '])), None)
@@ -244,7 +245,7 @@ def parse_csv_file(content: bytes) -> list:
     for _, row in df.iterrows():
         try:
             date_val = str(row[date_col]).strip()
-            desc_val = str(row[desc_col]).strip()
+            desc_val = ' '.join(str(row[desc_col]).strip().split())  # Collapse extra whitespace
             if not date_val or date_val == 'nan' or not desc_val or desc_val == 'nan':
                 continue
             parsed_date = dp.parse(date_val, dayfirst=True)
@@ -260,15 +261,19 @@ def parse_csv_file(content: bytes) -> list:
             elif debit_col and credit_col:
                 dr = str(row.get(debit_col, '')).replace(',', '').replace('$', '').strip()
                 cr = str(row.get(credit_col, '')).replace(',', '').replace('$', '').strip()
-                if dr and dr not in ['nan', '-', '']:
+                if dr and dr not in ['nan', '-', '', '0.0', '0']:
                     amount = abs(float(dr))
                     trans_type = "debit"
-                elif cr and cr not in ['nan', '-', '']:
+                elif cr and cr not in ['nan', '-', '', '0.0', '0']:
                     amount = abs(float(cr))
                     trans_type = "credit"
                 else:
                     continue
             else:
+                continue
+
+            # Skip zero-amount transactions
+            if amount == 0:
                 continue
 
             transactions.append({
@@ -586,32 +591,68 @@ async def upload_pdf(file: UploadFile = File(...), user: dict = Depends(get_curr
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=str(uuid.uuid4()),
-            system_message="You are an expert at parsing Australian bank statements. Extract all transactions and return ONLY a valid JSON array."
+            system_message=(
+                "You are an expert at parsing Australian bank statements from all major banks "
+                "(ANZ, CBA/Commonwealth, Westpac, NAB, BankSA, St George, Bendigo, Macquarie, etc.). "
+                "Extract ALL transactions and return ONLY a valid JSON array with no markdown or explanation."
+            )
         ).with_model("gemini", "gemini-2.5-flash")
 
         pdf_file = FileContentWithMimeType(file_path=tmp_path, mime_type="application/pdf")
         prompt = (
-            "Extract all transactions from this Australian bank statement. "
-            "Return ONLY a JSON array (no markdown, no explanation) with this exact format: "
-            '[{"date":"YYYY-MM-DD","description":"string","amount":0.00,"type":"debit or credit"}]. '
-            "For debits (money out/withdrawals), set type='debit'. "
-            "For credits (money in/deposits), set type='credit'. "
-            "Amount should always be a positive number. "
-            "Use Australian date format (DD/MM/YYYY in the original, convert to YYYY-MM-DD)."
+            "Parse this Australian bank statement PDF and extract ALL transactions. "
+            "Return ONLY a raw JSON array (no markdown, no code blocks, no explanation) in this exact format:\n"
+            '[{"date":"YYYY-MM-DD","description":"string","amount":0.00,"type":"debit or credit"}]\n\n'
+            "Rules:\n"
+            "- type='debit' for money OUT (withdrawals, purchases, payments, fees)\n"
+            "- type='credit' for money IN (deposits, refunds, salary, transfers in)\n"
+            "- amount is ALWAYS a positive number\n"
+            "- date MUST be in YYYY-MM-DD format. For dates like '29 APR' without year, use the statement year from the header\n"
+            "- Combine multi-line transaction descriptions into one string\n"
+            "- Skip header/footer rows, opening/closing balances, sub-totals, page markers\n"
+            "- Include ALL real transactions including ATM, EFTPOS, OSKO, internet deposits/withdrawals, VISA, BPAY\n"
+            "- The description should be clean and readable (e.g. 'Visa Purchase - Woolworths Kilkenny')\n"
+            "Output ONLY the JSON array. No other text."
         )
         response = await chat.send_message(UserMessage(text=prompt, file_contents=[pdf_file]))
         text = response.strip()
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
+        # Clean markdown code blocks if AI wraps in them
+        if "```" in text:
+            import re
+            match = re.search(r'```(?:json)?\s*([\s\S]+?)\s*```', text)
+            if match:
+                text = match.group(1).strip()
+        # Find the JSON array if wrapped in other text
+        if not text.startswith('['):
+            start = text.find('[')
+            end = text.rfind(']') + 1
+            if start >= 0 and end > start:
+                text = text[start:end]
         transactions = json.loads(text.strip())
-        return {"transactions": transactions, "count": len(transactions)}
+        # Filter out invalid entries
+        valid = []
+        for t in transactions:
+            try:
+                amt = float(t.get("amount", 0))
+                if amt <= 0:
+                    continue
+                valid.append({
+                    "date": str(t["date"]),
+                    "description": str(t.get("description", "Transaction")),
+                    "amount": round(amt, 2),
+                    "type": str(t.get("type", "debit")),
+                })
+            except Exception:
+                continue
+        return {"transactions": valid, "count": len(valid)}
     except Exception as e:
         logger.error(f"PDF parsing error: {e}")
         raise HTTPException(status_code=422, detail=f"Could not parse PDF: {str(e)}")
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 @api_router.post("/expenses/import")
 async def import_expenses(request: Request, user: dict = Depends(get_current_user)):

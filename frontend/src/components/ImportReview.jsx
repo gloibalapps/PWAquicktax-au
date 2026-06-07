@@ -1,8 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Upload, FileText, X, Check, Trash2, AlertCircle, ArrowUpRight, ArrowDownRight, Pencil } from 'lucide-react';
+import { Upload, FileText, X, Check, Trash2, AlertCircle, ArrowUpRight, ArrowDownRight, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
+const PAGE_SIZE = 50;
 
 // ─── Category lists ─────────────────────────────────────────
 const INCOME_CATS_BUSINESS = [
@@ -209,6 +210,7 @@ export default function ImportReview({ open, onClose, onComplete }) {
   const [rows, setRows] = useState([]);
   const [parseError, setParseError] = useState('');
   const [importResult, setImportResult] = useState(null);
+  const [page, setPage] = useState(0);
   const csvRef = useRef();
   const pdfRef = useRef();
 
@@ -217,6 +219,7 @@ export default function ImportReview({ open, onClose, onComplete }) {
     setRows([]);
     setParseError('');
     setImportResult(null);
+    setPage(0);
   };
 
   const handleClose = () => { reset(); onClose(); };
@@ -238,6 +241,7 @@ export default function ImportReview({ open, onClose, onComplete }) {
           return;
         }
         setRows(data.transactions.map((t, i) => buildRow(t, i)));
+        setPage(0);
         setStep('review');
       } else {
         const d = await res.json();
@@ -323,6 +327,8 @@ export default function ImportReview({ open, onClose, onComplete }) {
     }
   };
 
+  const totalPages = Math.ceil(rows.length / PAGE_SIZE);
+  const pagedRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const selectedCount = rows.filter(r => r.include).length;
   const incomeCount = rows.filter(r => r.include && r.import_type === 'income').length;
   const expenseCount = rows.filter(r => r.include && r.import_type === 'expense').length;
@@ -456,13 +462,33 @@ export default function ImportReview({ open, onClose, onComplete }) {
                       </tr>
                     </thead>
                     <tbody className="bg-white dark:bg-slate-900">
-                      {rows.map(row => (
+                      {pagedRows.map(row => (
                         <RowEditor key={row._key} row={row} onChange={updateRow} onRemove={removeRow} />
                       ))}
                     </tbody>
                   </table>
                 </div>
               </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between mt-3 text-xs text-slate-500 dark:text-slate-400">
+                  <span>
+                    Showing rows {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rows.length)} of {rows.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+                      className="p-1.5 rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="px-2 font-medium">{page + 1} / {totalPages}</span>
+                    <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+                      className="p-1.5 rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

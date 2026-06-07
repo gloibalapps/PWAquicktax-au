@@ -969,6 +969,115 @@ async def batch_import(request: Request, user: dict = Depends(get_current_user))
         except Exception as e:
             logger.warning(f"Batch import error: {e}")
 
+
+@api_router.post("/import/categorize")
+async def categorize_transactions(request: Request, user: dict = Depends(get_current_user)):
+    """
+    AI-powered batch categorization.
+    Takes up to 200 transactions, deduplicates by description, calls LLM once,
+    then maps results back to all transactions.
+    """
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+    body = await request.json()
+    transactions = body.get("transactions", [])  # [{_key, description, type}]
+    if not transactions:
+        return {"categories": []}
+
+    # ── Build unique description list (max 80 to keep prompt small + fast) ──────
+    seen_descs: dict[str, dict] = {}
+    for t in transactions:
+        desc_key = (t.get("description", "")[:60]).strip().upper()
+        if desc_key and desc_key not in seen_descs:
+            seen_descs[desc_key] = t
+
+    unique = list(seen_descs.values())[:80]
+
+    lines = "\n".join(
+        f'{i+1}. [{t.get("type","expense").upper()}] {t.get("description","")[:60]}'
+        for i, t in enumerate(unique)
+    )
+
+    categories_list = (
+        "EXPENSE BUSINESS: Advertising & Marketing | Bank Charges | Business Travel | Car & Vehicle | "
+        "Computer & Technology | Insurance | Legal & Professional | Motor Vehicle | Office Supplies | "
+        "Rent & Utilities | Staff & Contractors | Superannuation | Telephone & Internet | "
+        "Training & Education | Other Business Expenses\n"
+        "EXPENSE PERSONAL: Groceries & Food | Entertainment | Personal Travel | Health & Medical | "
+        "Clothing & Personal Care | Home & Garden | Personal Insurance | Utilities (Personal) | Other Personal Expenses\n"
+        "INCOME BUSINESS: Services | Product Sales | Consulting | Commission | Rental Income | "
+        "Interest Income | Government Payment | Other Business Income\n"
+        "INCOME PERSONAL: Salary/Wages | Interest (Personal) | Dividends | Gifts Received | Other Personal Income"
+    )
+
+    prompt = (
+        "You are an Australian tax accountant. Categorize these bank transactions for BAS/tax purposes.\n\n"
+        f"Available categories:\n{categories_list}\n\n"
+        "For each numbered transaction return a JSON array with one object per line:\n"
+        '[{"idx":1,"type":"expense","is_personal":false,"category":"Bank Charges","gst_included":false}]\n\n'
+        "Rules:\n"
+        "- type: 'income' or 'expense' (INCOME prefix → income, EXPENSE prefix → expense; use your judgment)\n"
+        "- is_personal: true only if clearly personal (groceries, entertainment, clothing, etc.)\n"
+        "- category: EXACT string from the category list above\n"
+        "- gst_included: true if GST likely applies (most business purchases/sales in AU)\n"
+        "- Bank fees/charges → Bank Charges, is_personal=false, gst_included=true\n"
+        "- ATM withdrawals → Other Personal Expenses, is_personal=true, gst_included=false\n"
+        "- OSKO/Internet deposits → classify by amount & description\n"
+        "- Salary/wages/jobseeker → Salary/Wages income, is_personal=true\n\n"
+        f"Transactions:\n{lines}\n\n"
+        "Return ONLY the JSON array, no markdown, no explanation."
+    )
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=str(uuid.uuid4()),
+            system_message="Australian tax transaction categorizer. Return ONLY valid JSON array."
+        ).with_model("gemini", "gemini-2.5-flash")
+
+        response = await chat.send_message(UserMessage(text=prompt))
+        text = response.strip()
+        if "```" in text:
+            import re as _re
+            m = _re.search(r'```(?:json)?\s*([\s\S]+?)\s*```', text)
+            text = m.group(1).strip() if m else text
+        if not text.startswith('['):
+            start, end = text.find('['), text.rfind(']') + 1
+            if start >= 0 and end > start:
+                text = text[start:end]
+
+        ai_results = json.loads(text)  # [{idx, type, is_personal, category, gst_included}]
+
+        # Build mapping: description_key → ai result
+        desc_map: dict[str, dict] = {}
+        for res in ai_results:
+            try:
+                idx = int(res.get("idx", 0)) - 1
+                if 0 <= idx < len(unique):
+                    desc_key = (unique[idx].get("description", "")[:60]).strip().upper()
+                    desc_map[desc_key] = res
+            except Exception:
+                continue
+
+        # Map back to all transactions using description key
+        output = []
+        for t in transactions:
+            desc_key = (t.get("description", "")[:60]).strip().upper()
+            ai = desc_map.get(desc_key, {})
+            output.append({
+                "_key": t.get("_key"),
+                "type": ai.get("type", t.get("type", "expense")),
+                "is_personal": bool(ai.get("is_personal", False)),
+                "category": ai.get("category", "Other Business Expenses"),
+                "gst_included": bool(ai.get("gst_included", False)),
+            })
+
+        return {"categories": output, "categorized": len(desc_map)}
+
+    except Exception as e:
+        logger.error(f"Categorize error: {e}")
+        raise HTTPException(status_code=422, detail=f"AI categorization failed: {str(e)}")
+
     return {"income_imported": income_imported, "expense_imported": expense_imported, "total": income_imported + expense_imported}
 
 # ============================================================

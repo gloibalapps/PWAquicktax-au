@@ -580,71 +580,270 @@ async def upload_csv(file: UploadFile = File(...), user: dict = Depends(get_curr
     transactions = parse_csv_file(content)
     return {"transactions": transactions, "count": len(transactions)}
 
+def parse_pdf_text_regex(pages_text: list, statement_year: int) -> list:
+    """
+    Fast regex-based parser for Australian bank statement text.
+    Works for BankSA, St George, Westpac, ANZ, CBA, NAB, Macquarie etc.
+    """
+    import re
+
+    MONTH_MAP = {'JAN':1,'FEB':2,'MAR':3,'APR':4,'MAY':5,'JUN':6,
+                 'JUL':7,'AUG':8,'SEP':9,'OCT':10,'NOV':11,'DEC':12}
+
+    # Keywords that indicate debits (money out)
+    DEBIT_KEYWORDS = re.compile(
+        r'WITHDRAWAL|PURCHASE|EFTPOS|WDL|DEBITCARD|BPAY|'
+        r'VISAPURCHASE|MASTERCARD|CHEQUE|INTERNETWITHDRAWAL|OSKOWITHDRAWAL|ATMWITHDRAWAL|'
+        r'ATMOPERATORFEE|DIRECTDEBIT|PERIODICTRANSFER|FOREIGNCURRENCYCONVERSN|'
+        r'VISA\s*PURCHASE|EFTPOS\s*DEBIT|OSKO\s*WITHDRAW|INTERNET\s*WITHDRAW|ATM\s*WITHDRAW',
+        re.IGNORECASE
+    )
+    CREDIT_KEYWORDS = re.compile(
+        r'OSKODEPOSIT|INTERNETDEPOSIT|DIRECTCREDIT|DIRECTDEPOSIT|'
+        r'SALARY|REFUND|PAYROLL|PENSION|CENTRELINK|JOBSEEKER|REVERSAL|REBATE|'
+        r'CREDITINTEREST|OSKO\s*DEPOSIT|INTERNET\s*DEPOSIT|PAYID\s*CREDIT',
+        re.IGNORECASE
+    )
+
+    # Skip these rows entirely
+    SKIP_LINE = re.compile(
+        r'SUBTOTAL|CARRIEDFORWARD|OPENINGBALANCE|CLOSINGBALANCE|BALANCE\s*\$|'
+        r'TransactionDetails|Date\s+Transaction|AccountSummary|StatementNo|'
+        r'Page \d|StatementPeriod|AccountNumber|BSBNumber|CustomerEnquiries|'
+        r'TotalCredits|TotalDebits|OpeningBalance|EFFECTIVEDATE',
+        re.IGNORECASE
+    )
+
+    # Pattern: line starting with DD+MON (no space) or DD space MON
+    DATE_LINE = re.compile(
+        r'^(\d{1,2})\s*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(.+)',
+        re.IGNORECASE
+    )
+    # DD/MM/YYYY or YYYY-MM-DD format  
+    ISO_DATE_LINE = re.compile(r'^(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})\s+(.+)')
+
+    # Money pattern: digits with optional comma thousands sep and 2 decimal places
+    MONEY_PAT = re.compile(r'([\d,]+\.\d{2})-?')
+
+    # Inline timestamp to strip: "29APR01:51", "28APR16:07"
+    TIMESTAMP = re.compile(r'\d{1,2}(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}:\d{2}', re.IGNORECASE)
+    # Date suffix like "23/05/24"
+    DATE_SUFFIX = re.compile(r'\d{2}/\d{2}/\d{2,4}')
+
+    transactions = []
+    full_text = '\n'.join(pages_text)
+    lines = full_text.split('\n')
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        if not line or SKIP_LINE.search(line):
+            i += 1
+            continue
+
+        # ── DD+MON format (BankSA, Westpac, NAB, St George) ──────────────────
+        m = DATE_LINE.match(line)
+        if m:
+            day, month_str, rest = int(m.group(1)), m.group(2).upper(), m.group(3).strip()
+            month_num = MONTH_MAP.get(month_str, 1)
+            date_str = f"{statement_year}-{month_num:02d}-{day:02d}"
+
+            # Collect continuation lines (e.g. second line of description)
+            desc_parts = [rest]
+            j = i + 1
+            while j < len(lines) and j < i + 4:  # max 3 continuation lines
+                next_line = lines[j].strip()
+                if not next_line or DATE_LINE.match(next_line) or SKIP_LINE.search(next_line):
+                    break
+                if ISO_DATE_LINE.match(next_line):
+                    break
+                desc_parts.append(next_line)
+                j += 1
+
+            full_desc = ' '.join(desc_parts)
+
+            # Extract all money amounts
+            numbers = MONEY_PAT.findall(full_desc)
+            if not numbers:
+                i += 1
+                continue
+
+            # Transaction amount = last-but-one if 2+ numbers, else only number
+            # Last number = running balance
+            amount_str = numbers[-2] if len(numbers) >= 2 else numbers[-1]
+            try:
+                amount = round(float(amount_str.replace(',', '')), 2)
+            except ValueError:
+                i += 1
+                continue
+            if amount <= 0:
+                i += 1
+                continue
+
+            # Clean the description
+            clean = TIMESTAMP.sub('', full_desc)        # strip inline timestamps
+            clean = DATE_SUFFIX.sub('', clean)           # strip date refs
+            clean = MONEY_PAT.sub('', clean)             # strip all amounts
+            clean = re.sub(r'\s+', ' ', clean).strip()  # normalize spaces
+            if not clean or len(clean) < 2:
+                clean = full_desc.split()[0]
+
+            # Debit vs credit from keywords
+            if CREDIT_KEYWORDS.search(clean) or CREDIT_KEYWORDS.search(full_desc):
+                trans_type = 'credit'
+            elif DEBIT_KEYWORDS.search(clean) or DEBIT_KEYWORDS.search(full_desc):
+                trans_type = 'debit'
+            else:
+                # Check balance sign: if the balance number ends in '-', previous balance was negative → likely debit
+                has_neg_balance = bool(re.search(r'[\d,]+\.\d{2}-', full_desc))
+                trans_type = 'debit' if has_neg_balance else 'credit'
+
+            transactions.append({"date": date_str, "description": clean, "amount": amount, "type": trans_type})
+            i = j
+            continue
+
+        # ── DD/MM/YYYY format (CBA, ANZ, Macquarie) ──────────────────────────
+        m2 = ISO_DATE_LINE.match(line)
+        if m2:
+            date_raw, rest = m2.group(1), m2.group(2)
+            try:
+                from dateutil import parser as dp
+                parsed_date = dp.parse(date_raw, dayfirst=True)
+                date_str = parsed_date.strftime('%Y-%m-%d')
+            except Exception:
+                i += 1
+                continue
+
+            desc_parts = [rest.strip()]
+            j = i + 1
+            while j < len(lines) and j < i + 4:
+                next_line = lines[j].strip()
+                if not next_line or ISO_DATE_LINE.match(next_line) or DATE_LINE.match(next_line):
+                    break
+                if SKIP_LINE.search(next_line):
+                    break
+                desc_parts.append(next_line)
+                j += 1
+
+            full_desc = ' '.join(desc_parts)
+            numbers = MONEY_PAT.findall(full_desc)
+            if not numbers:
+                i += 1
+                continue
+
+            amount_str = numbers[-2] if len(numbers) >= 2 else numbers[-1]
+            try:
+                amount = round(float(amount_str.replace(',', '')), 2)
+            except ValueError:
+                i += 1
+                continue
+            if amount <= 0:
+                i += 1
+                continue
+
+            clean = MONEY_PAT.sub('', full_desc)
+            clean = re.sub(r'\s+', ' ', clean).strip()
+
+            if re.search(r'\bCR\b', full_desc) or CREDIT_KEYWORDS.search(full_desc):
+                trans_type = 'credit'
+            elif re.search(r'\bDR\b', full_desc) or DEBIT_KEYWORDS.search(full_desc):
+                trans_type = 'debit'
+            else:
+                trans_type = 'debit'
+
+            transactions.append({"date": date_str, "description": clean, "amount": amount, "type": trans_type})
+            i = j
+            continue
+
+        i += 1
+
+    return transactions
+
+
 @api_router.post("/expenses/upload/pdf")
 async def upload_pdf(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContentWithMimeType
+    import pdfplumber, re
+
     content = await file.read()
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(content)
         tmp_path = tmp.name
+
     try:
+        # ── Step 1: Extract text from PDF (fast) ───────────────────────────────
+        pages_text = []
+        statement_year = 2025  # default
+        with pdfplumber.open(tmp_path) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text() or ''
+                pages_text.append(t)
+            # Detect year from statement period (e.g. "25/04/2024 to 24/10/2024")
+            first_text = pages_text[0] if pages_text else ''
+            # Look for 4-digit year in a date pattern (prefer statement period dates)
+            yr_matches = re.findall(r'(?:StatementPeriod|Period|Statement)\s*\S*?(20\d{2})', first_text, re.IGNORECASE)
+            if not yr_matches:
+                # Look for year in date patterns like "25/04/2024"
+                yr_matches = re.findall(r'\d{2}/\d{2}/(20\d{2})', first_text)
+            if not yr_matches:
+                # Look for year in "to 24/10/2024" type patterns
+                yr_matches = re.findall(r'to\s*\d{2}/\d{2}/(20\d{2})', first_text, re.IGNORECASE)
+            if yr_matches:
+                statement_year = int(yr_matches[-1])  # use most recent year found
+
+        # ── Step 2: Try fast regex parsing ─────────────────────────────────────
+        transactions = parse_pdf_text_regex(pages_text, statement_year)
+
+        # ── Step 3: If regex found enough transactions, return immediately ──────
+        if len(transactions) >= 5:
+            # Deduplicate by (date, amount, type)
+            seen = set()
+            unique = []
+            for t in transactions:
+                key = (t["date"], t["amount"], t["type"])
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(t)
+            unique.sort(key=lambda x: x["date"])
+            return {"transactions": unique, "count": len(unique), "method": "regex"}
+
+        # ── Step 4: Fallback — LLM on single compact text (first 5 pages only) ─
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        compact_text = '\n'.join(pages_text[:5])  # limit to first 5 pages to stay within timeout
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=str(uuid.uuid4()),
-            system_message=(
-                "You are an expert at parsing Australian bank statements from all major banks "
-                "(ANZ, CBA/Commonwealth, Westpac, NAB, BankSA, St George, Bendigo, Macquarie, etc.). "
-                "Extract ALL transactions and return ONLY a valid JSON array with no markdown or explanation."
-            )
+            system_message="Bank statement parser. Return ONLY JSON array."
         ).with_model("gemini", "gemini-2.5-flash")
-
-        pdf_file = FileContentWithMimeType(file_path=tmp_path, mime_type="application/pdf")
         prompt = (
-            "Parse this Australian bank statement PDF and extract ALL transactions. "
-            "Return ONLY a raw JSON array (no markdown, no code blocks, no explanation) in this exact format:\n"
-            '[{"date":"YYYY-MM-DD","description":"string","amount":0.00,"type":"debit or credit"}]\n\n'
-            "Rules:\n"
-            "- type='debit' for money OUT (withdrawals, purchases, payments, fees)\n"
-            "- type='credit' for money IN (deposits, refunds, salary, transfers in)\n"
-            "- amount is ALWAYS a positive number\n"
-            "- date MUST be in YYYY-MM-DD format. For dates like '29 APR' without year, use the statement year from the header\n"
-            "- Combine multi-line transaction descriptions into one string\n"
-            "- Skip header/footer rows, opening/closing balances, sub-totals, page markers\n"
-            "- Include ALL real transactions including ATM, EFTPOS, OSKO, internet deposits/withdrawals, VISA, BPAY\n"
-            "- The description should be clean and readable (e.g. 'Visa Purchase - Woolworths Kilkenny')\n"
-            "Output ONLY the JSON array. No other text."
+            f"Year={statement_year}. Extract transactions from this bank statement. "
+            "Return ONLY JSON array, no markdown:\n"
+            '[{"date":"YYYY-MM-DD","description":"str","amount":0.0,"type":"debit or credit"}]\n\n'
+            + compact_text
         )
-        response = await chat.send_message(UserMessage(text=prompt, file_contents=[pdf_file]))
+        response = await chat.send_message(UserMessage(text=prompt))
         text = response.strip()
-        # Clean markdown code blocks if AI wraps in them
         if "```" in text:
-            import re
-            match = re.search(r'```(?:json)?\s*([\s\S]+?)\s*```', text)
-            if match:
-                text = match.group(1).strip()
-        # Find the JSON array if wrapped in other text
+            m = re.search(r'```(?:json)?\s*([\s\S]+?)\s*```', text)
+            text = m.group(1).strip() if m else text
         if not text.startswith('['):
-            start = text.find('[')
-            end = text.rfind(']') + 1
+            start, end = text.find('['), text.rfind(']') + 1
             if start >= 0 and end > start:
                 text = text[start:end]
-        transactions = json.loads(text.strip())
-        # Filter out invalid entries
+        parsed = json.loads(text)
         valid = []
-        for t in transactions:
+        for t in parsed:
             try:
                 amt = float(t.get("amount", 0))
-                if amt <= 0:
-                    continue
-                valid.append({
-                    "date": str(t["date"]),
-                    "description": str(t.get("description", "Transaction")),
-                    "amount": round(amt, 2),
-                    "type": str(t.get("type", "debit")),
-                })
+                if amt > 0:
+                    valid.append({"date": str(t["date"]), "description": str(t.get("description", "Transaction")),
+                                  "amount": round(amt, 2), "type": str(t.get("type", "debit"))})
             except Exception:
                 continue
-        return {"transactions": valid, "count": len(valid)}
+        return {"transactions": valid, "count": len(valid), "method": "llm"}
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"PDF parsing error: {e}")
         raise HTTPException(status_code=422, detail=f"Could not parse PDF: {str(e)}")

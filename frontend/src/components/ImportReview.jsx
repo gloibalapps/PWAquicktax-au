@@ -385,7 +385,7 @@ export default function ImportReview({ open, onClose, onComplete }) {
               <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" style={{ borderWidth: '3px' }} />
               <div className="text-center">
                 <div className="font-medium text-slate-700 dark:text-slate-300">Parsing your file...</div>
-                <div className="text-sm mt-1">AI is extracting transactions from your bank statement</div>
+                <div className="text-sm mt-1">AI is reading your bank statement — this may take 20–40 seconds for multi-page PDFs</div>
               </div>
             </div>
           )}

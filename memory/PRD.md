@@ -51,6 +51,12 @@ Create an app for keeping track of tax in Australia catering to BAS statements. 
 - **BankSA CSV fix**: `index_col=False` in `pd.read_csv()` to handle trailing comma shifting columns
 - Description whitespace normalization (collapse extra spaces from bank exports)
 - Pagination in ImportReview: 50 rows per page (handles 1500+ row imports)
+- **PDF parsing overhaul**: Replaced slow LLM-only approach with fast hybrid parser:
+  - `parse_pdf_text_regex()`: instant regex-based parser (handles BankSA, Westpac, St George, NAB, ANZ, CBA, Macquarie)
+  - Parses 29-page, 443-transaction PDF in ~2.5 seconds (was timing out at 120+ seconds)
+  - LLM fallback for edge cases / unrecognized formats
+  - Year auto-detection from statement period dates
+  - Debit/credit classification from transaction keywords (VISAPURCHASE, ATMWITHDRAWAL, OSKODEPOSIT, etc.)
 - BAS PDF Download (`generateBASpdf` using jspdf + jspdf-autotable)
 - Improved AI PDF parsing prompt (handles multi-line transactions, all major AU banks)
 - Income CSV export: `GET /api/income/export?fy=XXXX`

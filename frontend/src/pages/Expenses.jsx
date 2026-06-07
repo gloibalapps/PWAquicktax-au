@@ -1,27 +1,31 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Layout from '@/components/Layout';
-import { Plus, Pencil, Trash2, Calendar, Search, X, Check, Upload, FileText, ArrowDownRight, AlertCircle } from 'lucide-react';
+import ImportReview from '@/components/ImportReview';
+import { Plus, Pencil, Trash2, Calendar, Search, X, Check, Upload, ArrowDownRight } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 const CURRENT_FY = (() => { const n = new Date(); return n.getMonth() >= 6 ? n.getFullYear() + 1 : n.getFullYear(); })();
 const FY_OPTIONS = Array.from({ length: 7 }, (_, i) => CURRENT_FY - i);
 const fmt = v => new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(v || 0);
 
-const CATEGORIES = [
+const EXPENSE_CATS_BUSINESS = [
   'Advertising & Marketing', 'Bank Charges', 'Business Travel', 'Car & Vehicle',
   'Computer & Technology', 'Insurance', 'Legal & Professional', 'Motor Vehicle',
   'Office Supplies', 'Rent & Utilities', 'Staff & Contractors', 'Superannuation',
   'Telephone & Internet', 'Training & Education', 'Other Business Expenses'
 ];
+const EXPENSE_CATS_PERSONAL = [
+  'Groceries & Food', 'Entertainment', 'Personal Travel', 'Health & Medical',
+  'Clothing & Personal Care', 'Home & Garden', 'Personal Insurance',
+  'Utilities (Personal)', 'Other Personal Expenses'
+];
 
 const EMPTY_FORM = {
   date: new Date().toISOString().slice(0, 10),
   description: '', amount: '', gst_included: false, gst_claimable: true,
-  category: 'Other Business Expenses', notes: '',
+  category: 'Other Business Expenses', is_personal: false, notes: '',
 };
 
 export default function Expenses() {
@@ -29,34 +33,33 @@ export default function Expenses() {
   const [fy, setFy] = useState(CURRENT_FY);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [deleteId, setDeleteId] = useState(null);
-  const [uploadState, setUploadState] = useState({ loading: false, error: '', parsed: [], step: 'idle' });
-  const csvRef = useRef();
-  const pdfRef = useRef();
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`${API}/expenses?fy=${fy}`, { credentials: 'include' });
       if (res.ok) setItems(await res.json());
-    } catch {}
+    } catch (_e) { /* ignore */ }
     setLoading(false);
   }, [fy]);
 
-  useEffect(() => { fetchItems(); }, [fetchItems]);
-
   const openAdd = () => { setEditItem(null); setForm(EMPTY_FORM); setError(''); setShowModal(true); };
-  const openEdit = (item) => {
+  const openEdit = useCallback((item) => {
     setEditItem(item);
     setForm({ date: item.date, description: item.description, amount: String(item.amount),
-      gst_included: item.gst_included, gst_claimable: item.gst_claimable, category: item.category, notes: item.notes || '' });
+      gst_included: item.gst_included, gst_claimable: item.gst_claimable, category: item.category,
+      is_personal: item.is_personal || false, notes: item.notes || '' });
     setError(''); setShowModal(true);
-  };
+  }, []);
+
+  useEffect(() => { fetchItems(); }, [fetchItems]);
 
   const handleSave = async () => {
     if (!form.date || !form.description || !form.amount) { setError('Date, description and amount are required.'); return; }
@@ -76,66 +79,8 @@ export default function Expenses() {
     try {
       await fetch(`${API}/expenses/${id}`, { method: 'DELETE', credentials: 'include' });
       setItems(prev => prev.filter(i => i.expense_id !== id));
-    } catch {}
+    } catch (_e) { /* ignore */ }
     setDeleteId(null);
-  };
-
-  const handleCSVUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setUploadState({ loading: true, error: '', parsed: [], step: 'parsing' });
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch(`${API}/expenses/upload/csv`, { method: 'POST', credentials: 'include', body: fd });
-      if (res.ok) {
-        const data = await res.json();
-        setUploadState({ loading: false, error: '', parsed: data.transactions, step: 'review' });
-      } else {
-        const d = await res.json();
-        setUploadState({ loading: false, error: d.detail || 'Failed to parse CSV', parsed: [], step: 'error' });
-      }
-    } catch { setUploadState({ loading: false, error: 'Network error', parsed: [], step: 'error' }); }
-    e.target.value = '';
-  };
-
-  const handlePDFUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setUploadState({ loading: true, error: '', parsed: [], step: 'parsing' });
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch(`${API}/expenses/upload/pdf`, { method: 'POST', credentials: 'include', body: fd });
-      if (res.ok) {
-        const data = await res.json();
-        setUploadState({ loading: false, error: '', parsed: data.transactions, step: 'review' });
-      } else {
-        const d = await res.json();
-        setUploadState({ loading: false, error: d.detail || 'Failed to parse PDF', parsed: [], step: 'error' });
-      }
-    } catch { setUploadState({ loading: false, error: 'Network error', parsed: [], step: 'error' }); }
-    e.target.value = '';
-  };
-
-  const [selectedTxns, setSelectedTxns] = useState({});
-
-  const handleImportConfirm = async () => {
-    const toImport = uploadState.parsed.filter((_, i) => selectedTxns[i] !== false);
-    if (!toImport.length) return;
-    setUploadState(prev => ({ ...prev, loading: true }));
-    try {
-      const res = await fetch(`${API}/expenses/import`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transactions: toImport })
-      });
-      if (res.ok) {
-        setUploadState({ loading: false, error: '', parsed: [], step: 'idle' });
-        setSelectedTxns({});
-        fetchItems();
-      }
-    } catch {}
   };
 
   const filtered = items.filter(i =>
@@ -150,80 +95,19 @@ export default function Expenses() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-3xl font-bold text-slate-900 dark:text-white" style={{ fontFamily: 'Outfit, sans-serif' }}>Expenses</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Track all business expenses</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Track all business & personal expenses</p>
           </div>
           <div className="flex gap-2">
-            <div className="relative">
-              <input ref={csvRef} type="file" accept=".csv" className="hidden" onChange={handleCSVUpload} data-testid="csv-file-input" />
-              <button data-testid="upload-csv-btn" onClick={() => csvRef.current?.click()}
-                className="flex items-center gap-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors">
-                <Upload className="w-4 h-4" /> CSV
-              </button>
-            </div>
-            <div className="relative">
-              <input ref={pdfRef} type="file" accept=".pdf" className="hidden" onChange={handlePDFUpload} data-testid="pdf-file-input" />
-              <button data-testid="upload-pdf-btn" onClick={() => pdfRef.current?.click()}
-                className="flex items-center gap-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors">
-                <FileText className="w-4 h-4" /> Bank PDF
-              </button>
-            </div>
+            <button data-testid="import-expenses-btn" onClick={() => setShowImport(true)}
+              className="flex items-center gap-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors">
+              <Upload className="w-4 h-4" /> Import
+            </button>
             <button data-testid="add-expense-btn" onClick={openAdd}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-5 py-2.5 text-sm font-medium shadow-sm transition-colors">
               <Plus className="w-4 h-4" /> Add Expense
             </button>
           </div>
         </div>
-
-        {/* Upload state */}
-        {uploadState.step === 'parsing' && (
-          <div data-testid="upload-parsing" className="mb-6 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-4 flex items-center gap-3">
-            <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm text-blue-800 dark:text-blue-200">Parsing your bank statement with AI...</span>
-          </div>
-        )}
-        {uploadState.step === 'error' && (
-          <div data-testid="upload-error" className="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-            <span className="text-sm text-red-800 dark:text-red-200">{uploadState.error}</span>
-            <button onClick={() => setUploadState({ loading: false, error: '', parsed: [], step: 'idle' })} className="ml-auto text-red-500 hover:text-red-700"><X className="w-4 h-4" /></button>
-          </div>
-        )}
-        {uploadState.step === 'review' && (
-          <div data-testid="upload-review" className="mb-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-slate-900 dark:text-white" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                Review Parsed Transactions ({uploadState.parsed.length} found)
-              </h3>
-              <button onClick={() => { setUploadState({ loading: false, error: '', parsed: [], step: 'idle' }); setSelectedTxns({}); }}
-                className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
-            </div>
-            <p className="text-xs text-slate-500 mb-3">Debit transactions only will be imported as expenses. Uncheck any you don't want to import.</p>
-            <div className="max-h-64 overflow-y-auto space-y-1.5 mb-4">
-              {uploadState.parsed.map((t, i) => (
-                <label key={i} data-testid={`parsed-txn-${i}`} className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer border text-sm ${t.type === 'debit' ? 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800' : 'border-transparent opacity-50'}`}>
-                  <input type="checkbox"
-                    checked={t.type === 'debit' && selectedTxns[i] !== false}
-                    disabled={t.type === 'credit'}
-                    onChange={e => setSelectedTxns(prev => ({ ...prev, [i]: e.target.checked }))}
-                    className="rounded" />
-                  <span className="flex-1 text-slate-900 dark:text-white truncate">{t.description}</span>
-                  <span className="text-slate-500 dark:text-slate-400 text-xs">{t.date}</span>
-                  <span className={`number-display font-medium ${t.type === 'debit' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                    {t.type === 'credit' ? '+' : '-'}{fmt(t.amount)}
-                  </span>
-                </label>
-              ))}
-            </div>
-            <div className="flex gap-3">
-              <button data-testid="import-confirm-btn" onClick={handleImportConfirm} disabled={uploadState.loading}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-5 py-2 text-sm font-medium disabled:opacity-50">
-                {uploadState.loading ? 'Importing...' : <><Check className="w-4 h-4" /> Import Selected</>}
-              </button>
-              <button onClick={() => { setUploadState({ loading: false, error: '', parsed: [], step: 'idle' }); setSelectedTxns({}); }}
-                className="px-4 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-lg text-slate-600 dark:text-slate-400">Cancel</button>
-            </div>
-          </div>
-        )}
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -282,9 +166,9 @@ export default function Expenses() {
                     <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Date</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Description</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Category</th>
+                    <th className="text-center px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Purpose</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Amount</th>
                     <th className="text-center px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">GST</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Source</th>
                     <th className="px-4 py-3"></th>
                   </tr>
                 </thead>
@@ -298,6 +182,13 @@ export default function Expenses() {
                         {item.notes && <div className="text-xs text-slate-400 truncate max-w-[180px]">{item.notes}</div>}
                       </td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">{item.category}</td>
+                      <td className="px-4 py-3 text-center">
+                        {item.is_personal ? (
+                          <span className="text-xs bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-2 py-0.5 rounded font-medium">Personal</span>
+                        ) : (
+                          <span className="text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded font-medium">Business</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right number-display font-semibold text-red-700 dark:text-red-400">{fmt(item.amount)}</td>
                       <td className="px-4 py-3 text-center">
                         {item.gst_included && item.gst_claimable ? (
@@ -305,11 +196,6 @@ export default function Expenses() {
                         ) : item.gst_included ? (
                           <span className="text-xs bg-slate-100 dark:bg-slate-700 text-slate-500 px-1.5 py-0.5 rounded">GST Incl.</span>
                         ) : <span className="text-xs text-slate-300 dark:text-slate-600">–</span>}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`text-xs px-1.5 py-0.5 rounded ${item.source === 'import' ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-500'}`}>
-                          {item.source}
-                        </span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1 justify-end">
@@ -337,6 +223,16 @@ export default function Expenses() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle style={{ fontFamily: 'Outfit, sans-serif' }}>{editItem ? 'Edit Expense' : 'Add Expense'}</DialogTitle></DialogHeader>
           <div className="space-y-4 pt-2">
+            {/* Purpose toggle */}
+            <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg">
+              {[{ val: false, label: 'Business' }, { val: true, label: 'Personal' }].map(opt => (
+                <button key={String(opt.val)} data-testid={`expense-purpose-${opt.val ? 'personal' : 'business'}`}
+                  onClick={() => setForm(f => ({ ...f, is_personal: opt.val, gst_claimable: !opt.val, category: (opt.val ? EXPENSE_CATS_PERSONAL : EXPENSE_CATS_BUSINESS)[0] }))}
+                  className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-all ${form.is_personal === opt.val ? (opt.val ? 'bg-purple-600 text-white shadow-sm' : 'bg-blue-600 text-white shadow-sm') : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Date *</label>
@@ -358,7 +254,12 @@ export default function Expenses() {
               <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Category</label>
               <select data-testid="expense-form-category" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
                 className="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                <optgroup label="Business Expenses">
+                  {EXPENSE_CATS_BUSINESS.map(c => <option key={c}>{c}</option>)}
+                </optgroup>
+                <optgroup label="Personal Expenses">
+                  {EXPENSE_CATS_PERSONAL.map(c => <option key={c}>{c}</option>)}
+                </optgroup>
               </select>
             </div>
             <div className="flex gap-4">
@@ -367,8 +268,9 @@ export default function Expenses() {
                 <span className="text-sm text-slate-700 dark:text-slate-300">GST Included</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" data-testid="expense-form-gst-claimable" checked={form.gst_claimable} onChange={e => setForm(f => ({ ...f, gst_claimable: e.target.checked }))} className="rounded" />
-                <span className="text-sm text-slate-700 dark:text-slate-300">GST Claimable</span>
+                <input type="checkbox" data-testid="expense-form-gst-claimable" checked={form.gst_claimable} disabled={form.is_personal}
+                  onChange={e => setForm(f => ({ ...f, gst_claimable: e.target.checked }))} className="rounded" />
+                <span className={`text-sm ${form.is_personal ? 'text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300'}`}>GST Claimable</span>
               </label>
             </div>
             <div>
@@ -387,6 +289,13 @@ export default function Expenses() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Import Review Modal */}
+      <ImportReview
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onComplete={() => { setShowImport(false); fetchItems(); }}
+      />
 
       <Dialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <DialogContent className="max-w-sm">

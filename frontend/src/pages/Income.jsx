@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Layout from '@/components/Layout';
-import { Plus, Pencil, Trash2, Calendar, Search, X, Check, ArrowUpRight } from 'lucide-react';
+import ImportReview, { ALL_INCOME_CATS } from '@/components/ImportReview';
+import { Plus, Pencil, Trash2, Calendar, Search, X, Check, ArrowUpRight, Upload } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -9,15 +10,18 @@ const CURRENT_FY = (() => { const n = new Date(); return n.getMonth() >= 6 ? n.g
 const FY_OPTIONS = Array.from({ length: 7 }, (_, i) => CURRENT_FY - i);
 const fmt = v => new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(v || 0);
 
-const CATEGORIES = [
-  'Services', 'Product Sales', 'Consulting', 'Rental Income',
-  'Interest Income', 'Commission', 'Government Payment', 'Other Income'
+const INCOME_CATS_BUSINESS = [
+  'Services', 'Product Sales', 'Consulting', 'Commission',
+  'Rental Income', 'Interest Income', 'Government Payment', 'Other Business Income'
+];
+const INCOME_CATS_PERSONAL = [
+  'Salary/Wages', 'Interest (Personal)', 'Dividends', 'Gifts Received', 'Other Personal Income'
 ];
 
 const EMPTY_FORM = {
   date: new Date().toISOString().slice(0, 10),
   description: '', amount: '', gst_included: false, gst_free: false,
-  category: 'Services', notes: '',
+  category: 'Services', is_personal: false, notes: '',
 };
 
 export default function Income() {
@@ -25,6 +29,7 @@ export default function Income() {
   const [fy, setFy] = useState(CURRENT_FY);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -37,20 +42,21 @@ export default function Income() {
     try {
       const res = await fetch(`${API}/income?fy=${fy}`, { credentials: 'include' });
       if (res.ok) setItems(await res.json());
-    } catch {}
+    } catch (_e) { /* ignore */ }
     setLoading(false);
   }, [fy]);
 
-  useEffect(() => { fetchItems(); }, [fetchItems]);
-
   const openAdd = () => { setEditItem(null); setForm(EMPTY_FORM); setError(''); setShowModal(true); };
-  const openEdit = (item) => {
+  const openEdit = useCallback((item) => {
     setEditItem(item);
     setForm({ date: item.date, description: item.description, amount: String(item.amount),
-      gst_included: item.gst_included, gst_free: item.gst_free, category: item.category, notes: item.notes || '' });
+      gst_included: item.gst_included, gst_free: item.gst_free, category: item.category,
+      is_personal: item.is_personal || false, notes: item.notes || '' });
     setError('');
     setShowModal(true);
-  };
+  }, []);
+
+  useEffect(() => { fetchItems(); }, [fetchItems]);
 
   const handleSave = async () => {
     if (!form.date || !form.description || !form.amount) {
@@ -83,7 +89,7 @@ export default function Income() {
     try {
       await fetch(`${API}/income/${id}`, { method: 'DELETE', credentials: 'include' });
       setItems(prev => prev.filter(i => i.income_id !== id));
-    } catch {}
+    } catch (_e) { /* ignore */ }
     setDeleteId(null);
   };
 
@@ -99,12 +105,18 @@ export default function Income() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-3xl font-bold text-slate-900 dark:text-white" style={{ fontFamily: 'Outfit, sans-serif' }}>Income</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Track all business income entries</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Track all business & personal income entries</p>
           </div>
-          <button data-testid="add-income-btn" onClick={openAdd}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-5 py-2.5 text-sm font-medium shadow-sm transition-colors">
-            <Plus className="w-4 h-4" /> Add Income
-          </button>
+          <div className="flex gap-2">
+            <button data-testid="import-income-btn" onClick={() => setShowImport(true)}
+              className="flex items-center gap-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors">
+              <Upload className="w-4 h-4" /> Import
+            </button>
+            <button data-testid="add-income-btn" onClick={openAdd}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-5 py-2.5 text-sm font-medium shadow-sm transition-colors">
+              <Plus className="w-4 h-4" /> Add Income
+            </button>
+          </div>
         </div>
 
         {/* Filters + Summary */}
@@ -169,6 +181,7 @@ export default function Income() {
                     <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Date</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Description</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Category</th>
+                    <th className="text-center px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Purpose</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Amount</th>
                     <th className="text-center px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">GST</th>
                     <th className="px-4 py-3"></th>
@@ -183,7 +196,14 @@ export default function Income() {
                         <div className="font-medium text-slate-900 dark:text-white">{item.description}</div>
                         {item.notes && <div className="text-xs text-slate-400 truncate max-w-[200px]">{item.notes}</div>}
                       </td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{item.category}</td>
+                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">{item.category}</td>
+                      <td className="px-4 py-3 text-center">
+                        {item.is_personal ? (
+                          <span className="text-xs bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-2 py-0.5 rounded font-medium">Personal</span>
+                        ) : (
+                          <span className="text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded font-medium">Business</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right number-display font-semibold text-green-700 dark:text-green-400">{fmt(item.amount)}</td>
                       <td className="px-4 py-3 text-center">
                         {item.gst_free ? (
@@ -224,6 +244,16 @@ export default function Income() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
+            {/* Purpose toggle */}
+            <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg">
+              {[{ val: false, label: 'Business' }, { val: true, label: 'Personal' }].map(opt => (
+                <button key={String(opt.val)} data-testid={`income-purpose-${opt.val ? 'personal' : 'business'}`}
+                  onClick={() => setForm(f => ({ ...f, is_personal: opt.val, category: (opt.val ? INCOME_CATS_PERSONAL : INCOME_CATS_BUSINESS)[0] }))}
+                  className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-all ${form.is_personal === opt.val ? (opt.val ? 'bg-purple-600 text-white shadow-sm' : 'bg-blue-600 text-white shadow-sm') : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Date *</label>
@@ -249,7 +279,12 @@ export default function Income() {
               <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
                 data-testid="income-form-category"
                 className="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                <optgroup label="Business Income">
+                  {INCOME_CATS_BUSINESS.map(c => <option key={c}>{c}</option>)}
+                </optgroup>
+                <optgroup label="Personal Income">
+                  {INCOME_CATS_PERSONAL.map(c => <option key={c}>{c}</option>)}
+                </optgroup>
               </select>
             </div>
             <div className="flex gap-4">
@@ -281,6 +316,13 @@ export default function Income() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Import Review Modal */}
+      <ImportReview
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onComplete={() => { setShowImport(false); fetchItems(); }}
+      />
 
       {/* Delete confirm */}
       <Dialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>

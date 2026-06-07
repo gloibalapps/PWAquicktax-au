@@ -49,6 +49,7 @@ class IncomeCreate(BaseModel):
     gst_included: bool = False
     gst_free: bool = False
     category: str = "Services"
+    is_personal: bool = False
     notes: Optional[str] = None
 
 class IncomeUpdate(BaseModel):
@@ -58,6 +59,7 @@ class IncomeUpdate(BaseModel):
     gst_included: Optional[bool] = None
     gst_free: Optional[bool] = None
     category: Optional[str] = None
+    is_personal: Optional[bool] = None
     notes: Optional[str] = None
 
 class ExpenseCreate(BaseModel):
@@ -67,6 +69,7 @@ class ExpenseCreate(BaseModel):
     gst_included: bool = False
     gst_claimable: bool = True
     category: str = "Other Business Expenses"
+    is_personal: bool = False
     notes: Optional[str] = None
 
 class ExpenseUpdate(BaseModel):
@@ -76,6 +79,7 @@ class ExpenseUpdate(BaseModel):
     gst_included: Optional[bool] = None
     gst_claimable: Optional[bool] = None
     category: Optional[str] = None
+    is_personal: Optional[bool] = None
     notes: Optional[str] = None
 
 class PropertyCreate(BaseModel):
@@ -436,6 +440,7 @@ async def create_income(data: IncomeCreate, user: dict = Depends(get_current_use
         "gst_included": data.gst_included,
         "gst_free": data.gst_free,
         "category": data.category,
+        "is_personal": data.is_personal,
         "financial_year": get_fy(data.date),
         "notes": data.notes,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -489,6 +494,7 @@ async def create_expense(data: ExpenseCreate, user: dict = Depends(get_current_u
         "gst_included": data.gst_included,
         "gst_claimable": data.gst_claimable,
         "category": data.category,
+        "is_personal": data.is_personal,
         "financial_year": get_fy(data.date),
         "source": "manual",
         "notes": data.notes,
@@ -570,21 +576,21 @@ async def import_expenses(request: Request, user: dict = Depends(get_current_use
     imported = []
     for t in transactions:
         try:
-            if t.get("type") == "credit":
-                continue
             expense_id = f"exp_{uuid.uuid4().hex[:12]}"
+            is_personal = t.get("is_personal", False)
             doc = {
                 "expense_id": expense_id,
                 "user_id": user["user_id"],
                 "date": t["date"],
                 "description": t.get("description", "Imported transaction"),
                 "amount": float(t["amount"]),
-                "gst_included": False,
-                "gst_claimable": True,
-                "category": "Other Business Expenses",
+                "gst_included": t.get("gst_included", False),
+                "gst_claimable": t.get("gst_claimable", not is_personal),
+                "category": t.get("category", "Other Business Expenses"),
+                "is_personal": is_personal,
                 "financial_year": get_fy(t["date"]),
                 "source": "import",
-                "notes": None,
+                "notes": t.get("notes"),
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -592,8 +598,94 @@ async def import_expenses(request: Request, user: dict = Depends(get_current_use
             doc.pop("_id", None)
             imported.append(doc)
         except Exception as e:
-            logger.warning(f"Failed to import transaction: {e}")
+            logger.warning(f"Failed to import expense: {e}")
     return {"imported": len(imported), "entries": imported}
+
+@api_router.post("/income/import")
+async def import_income(request: Request, user: dict = Depends(get_current_user)):
+    body = await request.json()
+    transactions = body.get("transactions", [])
+    imported = []
+    for t in transactions:
+        try:
+            income_id = f"inc_{uuid.uuid4().hex[:12]}"
+            doc = {
+                "income_id": income_id,
+                "user_id": user["user_id"],
+                "date": t["date"],
+                "description": t.get("description", "Imported transaction"),
+                "amount": float(t["amount"]),
+                "gst_included": t.get("gst_included", False),
+                "gst_free": t.get("gst_free", False),
+                "category": t.get("category", "Other Income"),
+                "is_personal": t.get("is_personal", False),
+                "financial_year": get_fy(t["date"]),
+                "source": "import",
+                "notes": t.get("notes"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.income.insert_one(doc)
+            doc.pop("_id", None)
+            imported.append(doc)
+        except Exception as e:
+            logger.warning(f"Failed to import income: {e}")
+    return {"imported": len(imported), "entries": imported}
+
+@api_router.post("/import/batch")
+async def batch_import(request: Request, user: dict = Depends(get_current_user)):
+    """Unified import: handles both income and expense transactions in one call."""
+    body = await request.json()
+    transactions = body.get("transactions", [])
+    income_imported = 0
+    expense_imported = 0
+
+    for t in transactions:
+        try:
+            import_type = t.get("import_type", "expense")
+            is_personal = t.get("is_personal", False)
+            d = t["date"]
+            desc = t.get("description", "Imported")
+            amt = float(t["amount"])
+
+            if import_type == "income":
+                doc = {
+                    "income_id": f"inc_{uuid.uuid4().hex[:12]}",
+                    "user_id": user["user_id"],
+                    "date": d, "description": desc, "amount": amt,
+                    "gst_included": t.get("gst_included", False),
+                    "gst_free": t.get("gst_free", False),
+                    "category": t.get("category", "Other Business Income"),
+                    "is_personal": is_personal,
+                    "financial_year": get_fy(d),
+                    "source": "import",
+                    "notes": t.get("notes"),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                await db.income.insert_one(doc)
+                income_imported += 1
+            else:
+                doc = {
+                    "expense_id": f"exp_{uuid.uuid4().hex[:12]}",
+                    "user_id": user["user_id"],
+                    "date": d, "description": desc, "amount": amt,
+                    "gst_included": t.get("gst_included", False),
+                    "gst_claimable": t.get("gst_claimable", not is_personal),
+                    "category": t.get("category", "Other Business Expenses"),
+                    "is_personal": is_personal,
+                    "financial_year": get_fy(d),
+                    "source": "import",
+                    "notes": t.get("notes"),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                await db.expenses.insert_one(doc)
+                expense_imported += 1
+        except Exception as e:
+            logger.warning(f"Batch import error: {e}")
+
+    return {"income_imported": income_imported, "expense_imported": expense_imported, "total": income_imported + expense_imported}
 
 # ============================================================
 # BAS ROUTES

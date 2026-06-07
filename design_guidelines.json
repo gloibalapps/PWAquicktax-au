@@ -1,0 +1,130 @@
+{
+  "theme": "LIGHT",
+  "archetype": "4 (Swiss & High-Contrast) - Fintech Blue/White Variant",
+  "design_philosophy": "A highly functional, deeply trustworthy Australian tax and BAS tracking dashboard. It leverages a crisp 'Blue and White' color palette to evoke authority and clarity while avoiding the clinical coldness of traditional banking apps. Data density is high but optically balanced using generous spacing and 1px borders instead of muddy shadows.",
+  "colors": {
+    "light": {
+      "background": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "border": "#E2E8F0",
+      "primary": "#2563EB",
+      "primary_hover": "#1D4ED8",
+      "text_main": "#0F172A",
+      "text_muted": "#64748B",
+      "success": "#059669",
+      "warning": "#D97706",
+      "danger": "#DC2626"
+    },
+    "dark": {
+      "background": "#0B1120",
+      "surface": "#1E293B",
+      "border": "#334155",
+      "primary": "#3B82F6",
+      "primary_hover": "#60A5FA",
+      "text_main": "#F8FAFC",
+      "text_muted": "#94A3B8",
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "danger": "#EF4444"
+    }
+  },
+  "typography": {
+    "font_families": {
+      "heading": "'Outfit', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "monospace": "'JetBrains Mono', monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 dark:text-white",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight text-slate-900 dark:text-white",
+      "h3": "text-xl sm:text-2xl font-medium text-slate-900 dark:text-white",
+      "h4": "text-lg font-medium text-slate-800 dark:text-slate-100",
+      "body": "text-base leading-relaxed text-slate-600 dark:text-slate-300",
+      "small": "text-sm text-slate-500 dark:text-slate-400",
+      "label": "text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400"
+    }
+  },
+  "spacing_and_layout": {
+    "philosophy": "Generous Spacing + 'Control Room' Grid for Dashboards.",
+    "dashboard_grid": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "card_padding": "p-6 sm:p-8",
+    "section_spacing": "py-16 sm:py-24",
+    "border_radius": "rounded-xl",
+    "borders": "border border-slate-200 dark:border-slate-700"
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-6 py-2.5 font-medium transition-colors shadow-sm",
+      "secondary": "bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg px-6 py-2.5 font-medium transition-colors dark:bg-slate-800 dark:hover:bg-slate-700 dark:border-slate-600 dark:text-slate-200"
+    },
+    "cards": {
+      "default": "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden"
+    },
+    "inputs": {
+      "default": "w-full border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+    },
+    "navigation": {
+      "header": "sticky top-0 z-50 backdrop-blur-xl bg-white/70 dark:bg-slate-950/70 border-b border-slate-200 dark:border-slate-800"
+    },
+    "data_display": {
+      "table": "w-full text-left border-collapse",
+      "th": "pb-3 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700",
+      "td": "py-4 text-sm text-slate-700 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800/50"
+    }
+  },
+  "icons": {
+    "library": "lucide-react",
+    "style": "stroke-2"
+  },
+  "media": {
+    "hero_background": {
+      "url": "https://images.unsplash.com/photo-1758261785723-fce85a1b4871?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTV8MHwxfHNlYXJjaHwzfHxhdXN0cmFsaWFuJTIwc21hbGwlMjBidXNpbmVzcyUyMG93bmVyfGVufDB8fHx8MTc4MDg0OTM0OHww&ixlib=rb-4.1.0&q=85",
+      "description": "Sydney harbour background (use with heavy blue/white gradient overlay: bg-gradient-to-r from-blue-900/90 to-blue-900/40)"
+    },
+    "user_testimonials": [
+      {
+        "url": "https://images.pexels.com/photos/8422729/pexels-photo-8422729.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Confident small business owner for testimonial or feature highlight."
+      },
+      {
+        "url": "https://images.pexels.com/photos/36729739/pexels-photo-36729739.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Cafe owner for target audience section."
+      }
+    ],
+    "abstract_features": {
+      "url": "https://images.pexels.com/photos/6203470/pexels-photo-6203470.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Blue neon line chart on grid - use for Premium Property or 7-year History feature section."
+    }
+  },
+  "pages": {
+    "landing": {
+      "layout": "Marketing Page - High visual impact. Hero section with Australian context background overlaid with deep blue. Large H1, clear CTA.",
+      "features": "Bento grid for features (Income tracking, PDF parsing, ATO-ready BAS). Use generous p-12 spacing."
+    },
+    "onboarding": {
+      "layout": "Minimalist centered card flow. Progress bar. Clean inputs for ABN, Business Type, and GST registration."
+    },
+    "dashboard": {
+      "layout": "Control Room Grid. Top row: 3-4 Summary Cards (Total Income, Expenses, Estimated Tax, Next BAS Date). Main area: Recharts line chart showing cash flow. Right column: Recent transactions."
+    },
+    "bas_statement": {
+      "layout": "Document-style layout. High contrast text. Use JetBrains Mono for all numeric fields. Clear 'Lodge-ready' status indicator."
+    },
+    "property_premium": {
+      "layout": "Premium locked state for non-subscribers with Stripe CTA. For subscribers: Grid of properties with individual expense/income tabs."
+    }
+  },
+  "accessibility": {
+    "contrast": "Ensure all text passes WCAG AA. Buttons must have explicit hover and focus states (focus-visible:ring-2 focus-visible:ring-blue-500).",
+    "testing": "All interactive elements MUST have data-testid attributes (e.g., data-testid='lodge-bas-button')."
+  },
+  "instructions_to_main_agent": [
+    "Use Shadcn UI components for all dashboard elements, forms, and dialogs.",
+    "Implement the Dark/Light mode toggle securely using Tailwind's 'dark' class strategy.",
+    "Apply 'font-mono' to all monetary values and tax figures for perfect vertical alignment.",
+    "Ensure the layout is completely mobile-responsive as this will be wrapped into mobile apps.",
+    "Do not use generic placeholder images. Use the media URLs provided in this JSON.",
+    "Install 'lucide-react' for icons and 'recharts' for financial charts.",
+    "Use standard HTML/Tailwind for marketing/landing pages, and Shadcn exclusively for the app dashboard/forms."
+  ]
+}

@@ -169,7 +169,7 @@ export default function Expenses() {
             </div>
             <button data-testid="add-expense-btn" onClick={openAdd}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-5 py-2.5 text-sm font-medium shadow-sm transition-colors">
-              <Plus className="w-4 h-4" /> Add
+              <Plus className="w-4 h-4" /> Add Expense
             </button>
           </div>
         </div>

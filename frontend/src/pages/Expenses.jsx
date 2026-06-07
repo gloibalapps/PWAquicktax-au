@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Layout from '@/components/Layout';
 import ImportReview from '@/components/ImportReview';
-import { Plus, Pencil, Trash2, Calendar, Search, X, Check, Upload, ArrowDownRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, Calendar, Search, X, Check, Upload, ArrowDownRight, Download } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -59,20 +59,21 @@ export default function Expenses() {
     setError(''); setShowModal(true);
   }, []);
 
-  useEffect(() => { fetchItems(); }, [fetchItems]);
-
-  const handleSave = async () => {
-    if (!form.date || !form.description || !form.amount) { setError('Date, description and amount are required.'); return; }
-    setSaving(true); setError('');
-    try {
-      const payload = { ...form, amount: parseFloat(form.amount) };
-      const url = editItem ? `${API}/expenses/${editItem.expense_id}` : `${API}/expenses`;
-      const method = editItem ? 'PUT' : 'POST';
-      const res = await fetch(url, { method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (res.ok) { setShowModal(false); fetchItems(); }
-      else { const d = await res.json(); setError(d.detail || 'Error saving'); }
-    } catch { setError('Network error'); }
-    setSaving(false);
+  const handleSave = () => {
+    const validationErr = (!form.date || !form.description || !form.amount) ? 'Date, description and amount are required.' : '';
+    setError(validationErr);
+    if (validationErr) return;
+    setSaving(true);
+    const payload = { ...form, amount: parseFloat(form.amount) };
+    const url = editItem ? `${API}/expenses/${editItem.expense_id}` : `${API}/expenses`;
+    const method = editItem ? 'PUT' : 'POST';
+    fetch(url, { method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(res => {
+        if (res.ok) { setShowModal(false); fetchItems(); }
+        else return res.json().then(d => setError(d.detail || 'Error saving'));
+      })
+      .catch(() => setError('Network error'))
+      .finally(() => setSaving(false));
   };
 
   const handleDelete = async (id) => {
@@ -82,6 +83,8 @@ export default function Expenses() {
     } catch (_e) { /* ignore */ }
     setDeleteId(null);
   };
+
+  useEffect(() => { fetchItems(); }, [fetchItems]);
 
   const filtered = items.filter(i =>
     !search || i.description.toLowerCase().includes(search.toLowerCase()) || i.category.toLowerCase().includes(search.toLowerCase())
@@ -102,6 +105,10 @@ export default function Expenses() {
               className="flex items-center gap-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors">
               <Upload className="w-4 h-4" /> Import
             </button>
+            <a href={`${API}/expenses/export?fy=${fy}`} data-testid="export-expenses-btn"
+              className="flex items-center gap-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors">
+              <Download className="w-4 h-4" /> Export CSV
+            </a>
             <button data-testid="add-expense-btn" onClick={openAdd}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-5 py-2.5 text-sm font-medium shadow-sm transition-colors">
               <Plus className="w-4 h-4" /> Add Expense

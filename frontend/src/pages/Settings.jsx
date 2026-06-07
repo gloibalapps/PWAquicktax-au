@@ -46,7 +46,7 @@ export default function Settings() {
               setPaymentResult('pending');
             }
           }
-        } catch {}
+        } catch (_e) { /* ignore network errors */ }
         // Clean up URL
         window.history.replaceState({}, '', '/settings');
       };
@@ -86,7 +86,7 @@ export default function Settings() {
         const data = await res.json();
         window.location.href = data.url;
       }
-    } catch {}
+    } catch (_e) { /* ignore checkout errors */ }
     setCheckoutLoading(false);
   };
 
@@ -137,9 +137,16 @@ export default function Settings() {
           </div>
           {isPremium ? (
             <div>
-              <p className="text-sm text-slate-600 dark:text-slate-400 mb-2">
+              <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">
                 You have access to all Premium features including Property Tracking.
               </p>
+              {user?.premium_since && (
+                <div className="text-xs text-slate-400 dark:text-slate-500 mb-3">
+                  Premium since: <span className="text-slate-600 dark:text-slate-300 font-medium">
+                    {new Date(user.premium_since).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </span>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2 text-xs">
                 {['Property tracking', 'Rental income management', 'Property expense categories', 'Priority support'].map(f => (
                   <div key={f} className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">

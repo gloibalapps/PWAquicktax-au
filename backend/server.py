@@ -428,6 +428,28 @@ async def list_income(fy: Optional[int] = None, user: dict = Depends(get_current
     items = await db.income.find(query, {"_id": 0}).sort("date", -1).to_list(10000)
     return items
 
+@api_router.get("/income/export")
+async def export_income_csv(fy: Optional[int] = None, user: dict = Depends(get_current_user)):
+    import csv
+    query = {"user_id": user["user_id"]}
+    if fy:
+        query["financial_year"] = fy
+    items = await db.income.find(query, {"_id": 0}).sort("date", -1).to_list(10000)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Description", "Amount", "Category", "Purpose", "GST Included", "GST Free", "Notes", "Financial Year"])
+    for item in items:
+        writer.writerow([
+            item.get("date", ""), item.get("description", ""), item.get("amount", 0),
+            item.get("category", ""), "Personal" if item.get("is_personal") else "Business",
+            "Yes" if item.get("gst_included") else "No", "Yes" if item.get("gst_free") else "No",
+            item.get("notes", ""), item.get("financial_year", ""),
+        ])
+    output.seek(0)
+    fname = f"income-FY{fy}.csv" if fy else "income-all.csv"
+    return StreamingResponse(io.BytesIO(output.getvalue().encode()), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename={fname}"})
+
 @api_router.post("/income")
 async def create_income(data: IncomeCreate, user: dict = Depends(get_current_user)):
     income_id = f"inc_{uuid.uuid4().hex[:12]}"
@@ -481,6 +503,28 @@ async def list_expenses(fy: Optional[int] = None, user: dict = Depends(get_curre
         query["financial_year"] = fy
     items = await db.expenses.find(query, {"_id": 0}).sort("date", -1).to_list(10000)
     return items
+
+@api_router.get("/expenses/export")
+async def export_expenses_csv(fy: Optional[int] = None, user: dict = Depends(get_current_user)):
+    import csv
+    query = {"user_id": user["user_id"]}
+    if fy:
+        query["financial_year"] = fy
+    items = await db.expenses.find(query, {"_id": 0}).sort("date", -1).to_list(10000)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Description", "Amount", "Category", "Purpose", "GST Included", "GST Claimable", "Notes", "Financial Year"])
+    for item in items:
+        writer.writerow([
+            item.get("date", ""), item.get("description", ""), item.get("amount", 0),
+            item.get("category", ""), "Personal" if item.get("is_personal") else "Business",
+            "Yes" if item.get("gst_included") else "No", "Yes" if item.get("gst_claimable") else "No",
+            item.get("notes", ""), item.get("financial_year", ""),
+        ])
+    output.seek(0)
+    fname = f"expenses-FY{fy}.csv" if fy else "expenses-all.csv"
+    return StreamingResponse(io.BytesIO(output.getvalue().encode()), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename={fname}"})
 
 @api_router.post("/expenses")
 async def create_expense(data: ExpenseCreate, user: dict = Depends(get_current_user)):
@@ -866,7 +910,11 @@ async def payment_status(session_id: str, request: Request, user: dict = Depends
         )
         await db.users.update_one(
             {"user_id": user["user_id"]},
-            {"$set": {"subscription_tier": "premium", "updated_at": datetime.now(timezone.utc).isoformat()}}
+            {"$set": {
+                "subscription_tier": "premium",
+                "premium_since": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
         )
 
     return {
@@ -891,7 +939,11 @@ async def stripe_webhook(request: Request):
             if user_id:
                 await db.users.update_one(
                     {"user_id": user_id},
-                    {"$set": {"subscription_tier": "premium", "updated_at": datetime.now(timezone.utc).isoformat()}}
+                    {"$set": {
+                        "subscription_tier": "premium",
+                        "premium_since": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }}
                 )
                 await db.payment_transactions.update_one(
                     {"session_id": event.session_id},

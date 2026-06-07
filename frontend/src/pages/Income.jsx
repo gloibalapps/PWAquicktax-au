@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Layout from '@/components/Layout';
 import ImportReview, { ALL_INCOME_CATS } from '@/components/ImportReview';
-import { Plus, Pencil, Trash2, Calendar, Search, X, Check, ArrowUpRight, Upload } from 'lucide-react';
+import { Plus, Pencil, Trash2, Calendar, Search, X, Check, ArrowUpRight, Upload, Download } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -58,31 +58,21 @@ export default function Income() {
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
 
-  const handleSave = async () => {
-    if (!form.date || !form.description || !form.amount) {
-      setError('Date, description and amount are required.');
-      return;
-    }
+  const onSaveClick = () => {
+    const validationErr = (!form.date || !form.description || !form.amount) ? 'Date, description and amount are required.' : '';
+    setError(validationErr);
+    if (validationErr) return;
     setSaving(true);
-    setError('');
-    try {
-      const payload = { ...form, amount: parseFloat(form.amount) };
-      const url = editItem ? `${API}/income/${editItem.income_id}` : `${API}/income`;
-      const method = editItem ? 'PUT' : 'POST';
-      const res = await fetch(url, {
-        method, credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        setShowModal(false);
-        fetchItems();
-      } else {
-        const d = await res.json();
-        setError(d.detail || 'Error saving');
-      }
-    } catch { setError('Network error'); }
-    setSaving(false);
+    const payload = { ...form, amount: parseFloat(form.amount) };
+    const url = editItem ? `${API}/income/${editItem.income_id}` : `${API}/income`;
+    const method = editItem ? 'PUT' : 'POST';
+    fetch(url, { method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(res => {
+        if (res.ok) { setShowModal(false); fetchItems(); }
+        else return res.json().then(d => setError(d.detail || 'Error saving'));
+      })
+      .catch(() => setError('Network error'))
+      .finally(() => setSaving(false));
   };
 
   const handleDelete = async (id) => {
@@ -112,6 +102,10 @@ export default function Income() {
               className="flex items-center gap-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors">
               <Upload className="w-4 h-4" /> Import
             </button>
+            <a href={`${API}/income/export?fy=${fy}`} data-testid="export-income-btn"
+              className="flex items-center gap-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors">
+              <Download className="w-4 h-4" /> Export CSV
+            </a>
             <button data-testid="add-income-btn" onClick={openAdd}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-5 py-2.5 text-sm font-medium shadow-sm transition-colors">
               <Plus className="w-4 h-4" /> Add Income
@@ -308,7 +302,7 @@ export default function Income() {
             {error && <p className="text-sm text-red-500">{error}</p>}
             <div className="flex justify-end gap-3 pt-2">
               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white border border-slate-300 dark:border-slate-600 rounded-lg transition-colors">Cancel</button>
-              <button data-testid="income-save-btn" onClick={handleSave} disabled={saving}
+              <button data-testid="income-save-btn" onClick={onSaveClick} disabled={saving}
                 className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 transition-colors">
                 {saving ? 'Saving...' : <><Check className="w-4 h-4" /> Save</>}
               </button>

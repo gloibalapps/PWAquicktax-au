@@ -1,104 +1,107 @@
 # TaxTrack AU — Product Requirements Document
 
-## Overview
-Australian tax tracking web app for sole traders, contractors and small businesses.
+## Original Problem Statement
+Create an app for keeping track of tax in Australia catering to BAS statements. Focused on Sole traders, contractors, and small businesses. Premium tier for property tracking. Track income and expenses. Upload expenses/income via CSV or AI-powered PDF parsing (all major Australian banks). Onboarding setup from ATO info. Handle 7 years of data. Generate quarterly BAS statements. Dark/light mode toggle. Editable/deletable data entries. Blue & white theme. 
 
-**App URL**: https://quicktax-au.preview.emergentagent.com
+**Integrations**: Google Social Login, Stripe for premium, Emergent LLM for AI parsing.
 
 ---
 
 ## Architecture
-- **Frontend**: React (port 3000), Tailwind CSS, Shadcn UI, Recharts
-- **Backend**: FastAPI (port 8001), Python
-- **Database**: MongoDB (`test_database`)
-- **Auth**: Emergent Google OAuth (cookie-based sessions)
-- **Payments**: Stripe (emergentintegrations, key: sk_test_emergent)
-- **AI Parsing**: Gemini 2.5 Flash via emergentintegrations (EMERGENT_LLM_KEY)
+- **Frontend**: React + Tailwind CSS + Shadcn UI (`/app/frontend/`)
+- **Backend**: FastAPI (`/app/backend/server.py`)
+- **Database**: MongoDB via `MONGO_URL`
+- **Auth**: Emergent Google Social Login (session_token cookie)
+- **Payments**: Stripe via emergentintegrations (`STRIPE_API_KEY`)
+- **AI**: Emergent LLM Key (Gemini 2.5 Flash for PDF parsing)
 
 ---
 
-## User Personas
-1. **Sole Trader** — individual running a business, needs ABN tracking, quarterly BAS
-2. **Contractor/Freelancer** — provides services, tracks invoices and expenses
-3. **Small Business Owner** — GST registered, multiple income sources, may own investment property
+## DB Schema
+- `users`: `{user_id, email, name, business_name, abn, subscription_tier, premium_since, created_at}`
+- `income`: `{income_id, user_id, date, description, amount, category, is_personal, gst_included, gst_free, notes, financial_year}`
+- `expenses`: `{expense_id, user_id, date, description, amount, category, is_personal, gst_included, gst_claimable, notes, financial_year}`
+- `properties`: `{property_id, user_id, ...}`
+- `payment_transactions`: `{session_id, user_id, status, payment_status}`
 
 ---
 
-## Core Requirements (Static)
-1. Google OAuth login (Emergent-managed)
-2. Onboarding wizard (business type, ABN, GST registration)
-3. Income CRUD (date, description, amount, GST included/free, category)
-4. Expense CRUD (date, description, amount, GST, category)
-5. CSV upload (all major Australian bank formats: ANZ, CBA, Westpac, NAB, Macquarie, St George, Bendigo)
-6. PDF bank statement upload with AI parsing (Gemini 2.5 Flash)
-7. BAS statement generator (quarterly, ATO-compliant fields G1, G3, G5, 1A, G11, 1B, Net GST)
-8. 7-year financial history (FY2020–FY2026)
-9. Dark/Light mode toggle (persisted in localStorage)
-10. All entries editable and deletable
-11. Premium subscription via Stripe ($19.99 AUD/month)
-12. Property tracking (premium only): multiple properties, rental income, expenses
+## What's Been Implemented
+
+### Phase 1 — Core MVP
+- Google OAuth login via Emergent (session_token cookie)
+- Stripe premium subscription setup ($19.99 AUD one-time payment -> premium tier)
+- Income CRUD (add, edit, delete, list with FY filter)
+- Expenses CRUD (add, edit, delete, list with FY filter)
+- BAS Statement page (quarterly Q1-Q4, auto-selects current quarter, ATO fields G1/G3/G5/1A/G11/1B)
+- Properties page (premium-gated)
+- Settings page (profile, ABN, premium upgrade)
+- Dark/Light mode toggle
+- Landing page with Sydney Harbour Bridge hero
+
+### Phase 2 — Import & Review
+- CSV import via shared `/api/expenses/upload/csv` endpoint (handles both income/expense)
+- AI PDF parsing via `/api/expenses/upload/pdf` (Gemini 2.5 Flash)
+- `ImportReview.jsx` component: editable line-by-line review before importing
+- Personal/Business categorization per transaction
+- Bulk actions (Set all Income, all Expense, all Business, all Personal)
+- `/api/import/batch` endpoint for bulk saving
+
+### Phase 3 — Export, PDF & Bug Fixes (Feb 2026)
+- **BankSA CSV fix**: `index_col=False` in `pd.read_csv()` to handle trailing comma shifting columns
+- Description whitespace normalization (collapse extra spaces from bank exports)
+- Pagination in ImportReview: 50 rows per page (handles 1500+ row imports)
+- BAS PDF Download (`generateBASpdf` using jspdf + jspdf-autotable)
+- Improved AI PDF parsing prompt (handles multi-line transactions, all major AU banks)
+- Income CSV export: `GET /api/income/export?fy=XXXX`
+- Expenses CSV export: `GET /api/expenses/export?fy=XXXX`
+- Export CSV buttons on Income and Expenses pages
+- Download PDF + Print buttons on BAS page
+- `premium_since` tracking when user upgrades
 
 ---
 
-## What's Been Implemented (as of 2026-06-07)
-
-### Backend (server.py)
-- Auth: Google OAuth session exchange, /api/auth/me, /api/auth/logout
-- User: profile update, subscription status
-- Onboarding: save/get onboarding data
-- Income: CRUD + financial year filtering
-- Expenses: CRUD + CSV upload + PDF AI parsing + bulk import
-- BAS: quarterly calculation with ATO fields
-- Properties: CRUD + transactions (premium-gated)
-- Payments: Stripe checkout, status polling, webhook
-- Dashboard: aggregated summary, chart data, recent transactions
-
-### Frontend
-- Landing page with hero (Sydney harbour), features, pricing
-- AuthCallback (OAuth session handling)
-- Onboarding wizard (3 steps)
-- Dashboard (summary cards, line chart, recent transactions)
-- Income page (CRUD with modal, search, FY filter)
-- Expenses page (CRUD, CSV upload, PDF AI parsing with review step)
-- BAS Statement page (quarterly calculator with all ATO fields)
-- Properties page (premium gate + property/transaction management)
-- Settings page (profile, dark mode, subscription upgrade)
-- Sidebar navigation with dark/light toggle
-- Responsive design (mobile-ready for future app conversion)
-
----
-
-## Test Credentials
-See /app/memory/test_credentials.md
+## Key API Endpoints
+- `POST /api/auth/google` — Google OAuth login
+- `GET /api/auth/me` — Current user info
+- `GET/POST /api/income` — List/create income
+- `GET /api/income/export` — Download income as CSV
+- `PUT/DELETE /api/income/{id}` — Edit/delete income
+- `GET/POST /api/expenses` — List/create expenses
+- `GET /api/expenses/export` — Download expenses as CSV
+- `PUT/DELETE /api/expenses/{id}` — Edit/delete expense
+- `POST /api/expenses/upload/csv` — Parse CSV bank statement
+- `POST /api/expenses/upload/pdf` — AI parse PDF bank statement
+- `POST /api/import/batch` — Bulk import transactions
+- `GET /api/bas` — Get BAS data for quarter/FY
+- `POST /api/stripe/create-checkout-session` — Start Stripe checkout
+- `GET /api/stripe/payment-status/{session_id}` — Check payment status
+- `GET/PUT /api/users/me` — User profile
 
 ---
 
 ## Prioritized Backlog
 
-### P0 (Critical - should be done next)
-- [ ] Recurring Stripe subscription (currently one-time payment)
-- [ ] PDF parsing error handling improvements for edge cases
-- [ ] Export BAS as PDF for printing/lodgement
+### P0 (High Priority)
+- ATO onboarding flow (ABN lookup, GST registration status)
+- True recurring Stripe subscriptions (current: one-time payment)
 
-### P1 (Important)
-- [ ] Income CSV import (not just expenses)
-- [ ] Tax agent/accountant sharing feature
-- [ ] Budget vs actuals comparison
-- [ ] Email reminders for BAS due dates
+### P1 (Medium Priority)
+- Budget vs Actuals comparison (set budgets per category)
+- Email reminders for BAS due dates (Q1=Oct28, Q2=Feb28, Q3=Apr28, Q4=Jul28)
+- Accountant/tax agent data sharing
 
-### P2 (Nice to have)
-- [ ] Apple/Android app wrapper (Capacitor or React Native)
-- [ ] Multi-currency support
-- [ ] Receipt image upload for expense verification
-- [ ] Super guarantee calculator
-- [ ] PAYG withholding calculator
+### P2 (Future)
+- Receipt image upload for expenses
+- Super guarantee calculator
+- PAYG withholding calculator
+- 7-year data archiving/optimization
 
 ---
 
-## ATO Compliance Notes
-- GST rate: 10%
-- GST registration threshold: $75,000 annual turnover
-- BAS quarters: Q1 Jul-Sep, Q2 Oct-Dec, Q3 Jan-Mar, Q4 Apr-Jun
-- Australian financial year: July 1 – June 30
-- Individual tax rates (simplified) used for tax estimates
-- All ATO info linked to official ato.gov.au sources
+## Known Notes
+- `mcp_lint_javascript` tool flags false positive `react-hooks/set-state-in-effect` on Income.jsx, Expenses.jsx, Settings.jsx — false positives, app compiles and runs correctly
+- Stripe uses `sk_test_emergent` test key (one-time payment, not true recurring)
+- AI PDF parsing uses Gemini 2.5 Flash via Emergent LLM Key
+- CSV upload uses shared endpoint `/api/expenses/upload/csv` for both income and expense (type assigned during review)
+- MongoDB seed: `db.users.updateOne({'user_id':'test-user-taxtrack-001'},{'$set':{'subscription_tier':'premium'}})`

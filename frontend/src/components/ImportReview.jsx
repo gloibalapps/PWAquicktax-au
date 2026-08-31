@@ -149,7 +149,7 @@ function BulkEditBar({ count, onApply, onClear }) {
   const [purpose, setPurpose] = useState('');
   const [category, setCategory] = useState('');
   const [gst, setGst] = useState('');
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
 
   const apply = () => {
     const changes = {};

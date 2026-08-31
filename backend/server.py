@@ -1078,8 +1078,6 @@ async def categorize_transactions(request: Request, user: dict = Depends(get_cur
         logger.error(f"Categorize error: {e}")
         raise HTTPException(status_code=422, detail=f"AI categorization failed: {str(e)}")
 
-    return {"income_imported": income_imported, "expense_imported": expense_imported, "total": income_imported + expense_imported}
-
 # ============================================================
 # BAS ROUTES
 # ============================================================

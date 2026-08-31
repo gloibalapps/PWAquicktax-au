@@ -47,15 +47,15 @@ Create an app for keeping track of tax in Australia catering to BAS statements. 
 - Bulk actions (Set all Income, all Expense, all Business, all Personal)
 - `/api/import/batch` endpoint for bulk saving
 
-### Phase 4 — AI Categorization & Bulk Edit (Feb 2026)
-- `POST /api/import/categorize` — AI categorization endpoint (Gemini Flash, batches up to 80 unique descriptions)
+### Phase 4 — AI Categorization & Bulk Edit (Feb 2026) ✅ TESTED
+- `POST /api/import/categorize` — AI categorization endpoint (Gemini 2.5 Flash, batches up to 80 unique descriptions)
 - `ImportReview.jsx` full rewrite:
-  - **AI Categorize button** — one-click categorize all rows (type, purpose, category, GST)
-  - **Select All checkbox** — header checkbox with indeterminate state (selects current page)
-  - **BulkEditBar** — per-selection bulk editor: Type / Purpose / Category / GST dropdowns applied to all selected rows
-  - Two-checkbox row design: first=select (for bulk edit), second=include (for import)
-  - Quick-pill bulk actions (Income/Expense/Business/Personal) for all included rows
-  - Clear selection / Select all X rows links
+  - **AI Categorize button** — one-click categorize all rows (type, purpose, category, GST) ✅
+  - **Select All checkbox** — header checkbox with indeterminate state (selects current page) ✅
+  - **BulkEditBar** — per-selection bulk editor: Type / Purpose / Category / GST dropdowns applied to all selected rows (starts expanded by default) ✅
+  - Two-checkbox row design: first=select (for bulk edit), second=include (for import) ✅
+  - Quick-pill bulk actions (Income/Expense/Business/Personal) for all included rows ✅
+  - Clear selection / Select all X rows links ✅
 - **BankSA CSV fix**: `index_col=False` in `pd.read_csv()` to handle trailing comma shifting columns
 - Description whitespace normalization (collapse extra spaces from bank exports)
 - Pagination in ImportReview: 50 rows per page (handles 1500+ row imports)

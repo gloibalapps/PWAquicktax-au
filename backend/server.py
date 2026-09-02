@@ -156,6 +156,9 @@ class PropertyCreate(BaseModel):
     construction_date: Optional[str] = None
     plant_equipment_value: Optional[float] = None
     depreciation_method: Optional[str] = "prime_cost"
+    current_market_value: Optional[float] = None
+    acquisition_costs: Optional[float] = None
+    capital_improvements: Optional[float] = None
     notes: Optional[str] = None
 
 class PropertyTransactionCreate(BaseModel):
@@ -1285,6 +1288,9 @@ async def create_property(data: PropertyCreate, user: dict = Depends(require_pre
         "construction_date": data.construction_date,
         "plant_equipment_value": data.plant_equipment_value,
         "depreciation_method": data.depreciation_method or "prime_cost",
+        "current_market_value": data.current_market_value,
+        "acquisition_costs": data.acquisition_costs,
+        "capital_improvements": data.capital_improvements,
         "notes": data.notes,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),

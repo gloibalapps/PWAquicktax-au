@@ -1,0 +1,45 @@
+{
+  "summary": "Full backend + frontend testing of CGT Estimate tab feature (TaxTrack AU). All CGT functionality verified: 4 tabs present, holding period timeline, 50% discount badge, cost base breakdown, market value inline editor, capital gain/loss display, taxable gain, all 4 ATO bracket rows, ATO disclaimer, property form with 3 new CGT fields. Backend stores and returns new fields correctly. Depreciation tab regression passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PUT /api/properties/{id} uses PropertyCreate model with model_dump() — if client sends partial data (only current_market_value), optional fields reset to null. Frontend correctly sends all fields in PUT payload, so this is not a runtime issue, but could be fragile if another client sends partial PUT."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% - GET returns all 3 new fields, PUT stores them correctly",
+    "frontend": "100% - all 12 feature checks pass"
+  },
+  "feature_test_results": {
+    "4_tabs_present": "PASS - Transactions, Depreciation, CGT Estimate, Details all present",
+    "cgt-discount-badge": "PASS - shows '50% CGT Discount Eligible' (green) for property held 7.5 yrs",
+    "cgt-cost-base": "PASS - $977,500.00 (850000+42500+85000)",
+    "cgt-capital-gain": "PASS - +$172,500.00 (1150000-977500)",
+    "cgt-taxable-gain": "PASS - $86,250.00 taxable (50% discount applied)",
+    "cgt-bracket-190": "PASS - 19% bracket shows $16,387.50",
+    "cgt-bracket-325": "PASS - 32.5% bracket shows $28,031.25",
+    "cgt-bracket-370": "PASS - 37% bracket shows $31,912.50",
+    "cgt-bracket-450": "PASS - 45% bracket shows $38,812.50",
+    "cgt-edit-mv-btn": "PASS - visible when market value set, enables inline editing",
+    "cgt-market-value-input": "PASS - appears after clicking edit, saves new value",
+    "market_value_update_recalculates": "PASS - changing to 1200000 shows +$222,500.00",
+    "property_form_new_fields": "PASS - Acquisition Costs (42500), Capital Improvements (85000), Current Market Value (1150000) all in form",
+    "backend_get_new_fields": "PASS - all 3 fields returned in GET /api/properties",
+    "backend_put_stores_fields": "PASS - PUT correctly stores and returns all 3 fields",
+    "ato_disclaimer": "PASS - visible on CGT tab",
+    "depreciation_tab_regression": "PASS - still loads correctly"
+  },
+  "seed_data_creation": "Used existing test property prop_821cccd7105e with market value 1150000",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "CGT Estimate tab fully working. Test property prop_821cccd7105e has purchase_price=850000, acquisition_costs=42500, capital_improvements=85000, current_market_value=1150000, purchase_date=2019-03-15. All CGT calculations verified correct. Portfolio value shows $850,000 (based on purchase_price, not market_value - this may be intentional)."
+}

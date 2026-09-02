@@ -47,7 +47,17 @@ Create an app for keeping track of tax in Australia catering to BAS statements. 
 - Bulk actions (Set all Income, all Expense, all Business, all Personal)
 - `/api/import/batch` endpoint for bulk saving
 
-### Phase 6 — Property Tracking (Feb 2026) ✅ TESTED
+### Phase 7 — CGT Estimate Tab (Feb 2026) ✅ TESTED
+Full Australian CGT calculator integrated into each property's detail view:
+- **New backend fields**: `current_market_value`, `acquisition_costs`, `capital_improvements` on PropertyCreate
+- **Holding period timeline**: Visual bar from purchase date → today, shows years held, 50% discount eligibility badge (green if ≥ 12 months, amber if not yet)
+- **Cost base breakdown**: Purchase price + acquisition costs + capital improvements with total
+- **Inline market value editor**: Set/update estimated current value directly on CGT tab without opening edit modal
+- **Capital gain / loss**: Market value − cost base, auto-detects loss (shows offset note)
+- **50% CGT discount**: Applied automatically for properties held ≥ 12 months (ATO individuals rule)
+- **CGT by bracket**: 4 ATO marginal rates (19%, 32.5%, 37%, 45%) × taxable gain
+- **ATO disclaimer**: Main residence exemption, 6-year rule, cost base adjustment notes
+- **Testing**: 100% — all 12 frontend + backend tests passing
 Premium-gated property tracker fully implemented:
 - **Portfolio Summary Bar**: Total portfolio value, total equity, annual rental income, FY Div 43 depreciation estimate
 - **Property CRUD**: Full add/edit/delete with fields: address, type, purchase date, purchase price, loan amount, weekly rent, construction cost, construction date, plant & equipment value, depreciation method

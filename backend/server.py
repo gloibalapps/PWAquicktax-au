@@ -30,6 +30,69 @@ logger = logging.getLogger(__name__)
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', '')
 
+# ── PDF extraction prompt (adapted from Hector Garcia CPA's Claude artifact) ──
+EXTRACTION_PROMPT_AU = """Extract every transaction from this Australian bank or credit card statement. Return ONLY this JSON shape — no prose, no markdown, no code fences:
+{
+  "statementType": "bank",
+  "accountInfo": {
+    "bankName": null,
+    "accountNumberLast4": null,
+    "statementPeriod": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" }
+  },
+  "balances": {
+    "beginningBalance": null,
+    "endingBalance": null
+  },
+  "transactions": [
+    {
+      "date": "YYYY-MM-DD",
+      "description": "raw description as printed",
+      "cleanedPayee": "just the merchant/payee name, no codes or IDs",
+      "amount": 0.0,
+      "category": "exact category string from list below",
+      "type": "debit"
+    }
+  ]
+}
+CRITICAL RULES:
+1. SIGNS — bank statements: deposits POSITIVE, withdrawals NEGATIVE. Credit card: charges POSITIVE, payments/refunds NEGATIVE. So that beginningBalance + sum(amounts) = endingBalance.
+2. DATES — always YYYY-MM-DD. Infer year from statement period if only DD/MM shown.
+3. CLEANED PAYEE — strip bank codes, transaction IDs, city/state codes, dates. "VISAPURCHASE WOOLWORTHS 1234 SYDNEY NSW 06/01" → "Woolworths". "OSKO PAYMENT FROM JOHN SMITH" → "John Smith".
+4. CATEGORY — use EXACTLY one of these strings:
+   INCOME: Services | Product Sales | Consulting | Commission | Rental Income | Interest Income | Government Payment | Other Business Income | Salary/Wages | Interest (Personal) | Dividends | Gifts Received | Other Personal Income
+   EXPENSE: Advertising & Marketing | Bank Charges | Business Travel | Car & Vehicle | Computer & Technology | Insurance | Legal & Professional | Motor Vehicle | Office Supplies | Rent & Utilities | Staff & Contractors | Superannuation | Telephone & Internet | Training & Education | Other Business Expenses | Groceries & Food | Entertainment | Personal Travel | Health & Medical | Clothing & Personal Care | Home & Garden | Personal Insurance | Utilities (Personal) | Other Personal Expenses
+5. INCLUDE EVERY transaction — do not skip or summarise.
+6. Return ONLY the JSON object."""
+
+def repair_and_parse_json(text: str) -> dict:
+    """Robust JSON repair — strip fences, trailing commas, close truncated objects."""
+    import re as _re
+    t = text.strip()
+    t = _re.sub(r'^```(?:json)?\s*', '', t, flags=_re.IGNORECASE)
+    t = _re.sub(r'```\s*$', '', t, flags=_re.IGNORECASE).strip()
+    first_brace = t.find('{')
+    if first_brace > 0:
+        t = t[first_brace:]
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+    repaired = _re.sub(r',(\s*[}\]])', r'\1', t)
+    try:
+        return json.loads(repaired)
+    except Exception:
+        pass
+    open_braces = repaired.count('{') - repaired.count('}')
+    open_brackets = repaired.count('[') - repaired.count(']')
+    last_obj = repaired.rfind('},')
+    if last_obj > -1 and (open_braces > 0 or open_brackets > 0):
+        repaired = repaired[:last_obj + 1]
+    closing = ']' * max(0, open_brackets) + '}' * max(0, open_braces)
+    try:
+        return json.loads(repaired + closing)
+    except Exception as e:
+        raise ValueError(f"Could not parse model JSON output: {e}")
+
 # ============================================================
 # MODELS
 # ============================================================
@@ -794,9 +857,8 @@ async def upload_pdf(file: UploadFile = File(...), user: dict = Depends(get_curr
         # ── Step 2: Try fast regex parsing ─────────────────────────────────────
         transactions = parse_pdf_text_regex(pages_text, statement_year)
 
-        # ── Step 3: If regex found enough transactions, return immediately ──────
+        # Step 3: If regex found enough transactions, return immediately
         if len(transactions) >= 5:
-            # Deduplicate by (date, amount, type)
             seen = set()
             unique = []
             for t in transactions:
@@ -805,42 +867,70 @@ async def upload_pdf(file: UploadFile = File(...), user: dict = Depends(get_curr
                     seen.add(key)
                     unique.append(t)
             unique.sort(key=lambda x: x["date"])
-            return {"transactions": unique, "count": len(unique), "method": "regex"}
+            for t in unique:
+                t.setdefault("cleanedPayee", "")
+                t.setdefault("category", "")
+            return {
+                "transactions": unique, "count": len(unique), "method": "regex",
+                "balances": None, "statementType": "bank", "accountInfo": {}
+            }
 
-        # ── Step 4: Fallback — LLM on single compact text (first 5 pages only) ─
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        compact_text = '\n'.join(pages_text[:5])  # limit to first 5 pages to stay within timeout
+        # Step 4: LLM fallback — send full PDF natively to Gemini (no page limit)
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContentWithMimeType
+
+        pdf_attachment = FileContentWithMimeType(file_path=tmp_path, mime_type="application/pdf")
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=str(uuid.uuid4()),
-            system_message="Bank statement parser. Return ONLY JSON array."
+            system_message="You are a forensic accountant extracting transactions from an Australian bank statement PDF. Return ONLY valid JSON. No prose, no markdown, no code fences."
         ).with_model("gemini", "gemini-2.5-flash")
-        prompt = (
-            f"Year={statement_year}. Extract transactions from this bank statement. "
-            "Return ONLY JSON array, no markdown:\n"
-            '[{"date":"YYYY-MM-DD","description":"str","amount":0.0,"type":"debit or credit"}]\n\n'
-            + compact_text
-        )
-        response = await chat.send_message(UserMessage(text=prompt))
-        text = response.strip()
-        if "```" in text:
-            m = re.search(r'```(?:json)?\s*([\s\S]+?)\s*```', text)
-            text = m.group(1).strip() if m else text
-        if not text.startswith('['):
-            start, end = text.find('['), text.rfind(']') + 1
-            if start >= 0 and end > start:
-                text = text[start:end]
-        parsed = json.loads(text)
+
+        response = await chat.send_message(UserMessage(
+            text=EXTRACTION_PROMPT_AU,
+            file_contents=[pdf_attachment]
+        ))
+
+        parsed = repair_and_parse_json(response.strip())
+
+        raw_txns = parsed.get("transactions", [])
+        balances = parsed.get("balances") or {}
+        statement_type = parsed.get("statementType", "bank")
+        account_info = parsed.get("accountInfo") or {}
+
+        # Auto-correct sign convention using balance reconciliation
+        begin = float(balances.get("beginningBalance") or 0)
+        end = float(balances.get("endingBalance") or 0)
+        if begin != 0 or end != 0:
+            total = sum(float(t.get("amount", 0)) for t in raw_txns)
+            err_as_is = abs(begin + total - end)
+            err_flipped = abs(begin - total - end)
+            if err_flipped < err_as_is - 0.01:
+                for t in raw_txns:
+                    t["amount"] = -float(t.get("amount", 0))
+
         valid = []
-        for t in parsed:
+        for t in raw_txns:
             try:
-                amt = float(t.get("amount", 0))
-                if amt > 0:
-                    valid.append({"date": str(t["date"]), "description": str(t.get("description", "Transaction")),
-                                  "amount": round(amt, 2), "type": str(t.get("type", "debit"))})
+                raw_amt = float(t.get("amount", 0))
+                amt = round(abs(raw_amt), 2)
+                if amt <= 0:
+                    continue
+                tx_type = "credit" if str(t.get("type", "debit")).lower() == "credit" else "debit"
+                valid.append({
+                    "date": str(t.get("date", "")),
+                    "description": str(t.get("description", "Transaction")),
+                    "cleanedPayee": str(t.get("cleanedPayee", "") or ""),
+                    "amount": amt,
+                    "type": tx_type,
+                    "category": str(t.get("category", "") or ""),
+                })
             except Exception:
                 continue
-        return {"transactions": valid, "count": len(valid), "method": "llm"}
+
+        return {
+            "transactions": valid, "count": len(valid), "method": "llm_native",
+            "balances": balances, "statementType": statement_type, "accountInfo": account_info
+        }
 
     except HTTPException:
         raise

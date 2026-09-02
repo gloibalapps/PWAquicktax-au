@@ -1,7 +1,8 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Upload, FileText, X, Check, Trash2, AlertCircle, ArrowUpRight, ArrowDownRight,
-  ChevronLeft, ChevronRight, Sparkles, Sliders } from 'lucide-react';
+  ChevronLeft, ChevronRight, Sparkles, Sliders, Settings2, RefreshCw, Info } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 const PAGE_SIZE = 50;
@@ -16,6 +17,94 @@ export const ALL_INCOME_CATS = [...INCOME_CATS_BUSINESS, ...INCOME_CATS_PERSONAL
 export const ALL_EXPENSE_CATS = [...EXPENSE_CATS_BUSINESS, ...EXPENSE_CATS_PERSONAL];
 const ALL_CATS = [...new Set([...ALL_INCOME_CATS, ...ALL_EXPENSE_CATS])];
 
+// ─── Description cleanup pipeline (ported from Hector Garcia CPA's artifact) ─
+const DEFAULT_CLEANUP_OPTS = {
+  removeDates: true, removeCurrency: true, removePhones: true, removeStates: true,
+  removeHashNumbers: true, punctToSpace: true, removeSpecial: true,
+  removeNumsFromAlpha: true, removeShortNumbers: true, minDigits: 4,
+  removeLongNumbers: true, maxDigits: 12, removeExtraSpaces: true, dedupeWords: true,
+  caseMode: 'title',
+  customPhrases: [
+    'Point of sale withdrawal','checkcard purchase','purchas*','paypal ?','sq ?',
+    'Orig CO Name:','Entry Descr:','CO Entry Descr:','INDN:','DES:',
+    'Orig ID:*','Ind ID:*','Desc Date:*','Trace#:*','Eed:*','PMT INFO:*','Confirmation#*',
+    'VISAPURCHASE','EFTPOS DEBIT','OSKO DEPOSIT','OSKO WITHDRAWAL','ATM WITHDRAWAL',
+    'INTERNET BANKING','DIRECT CREDIT','DIRECT DEBIT','INTERNET WITHDRAWAL'
+  ].join('\n')
+};
+const AU_STATES = 'NSW|VIC|QLD|WA|SA|TAS|ACT|NT';
+function wildcardToRegex(phrase) {
+  let out = '';
+  for (const ch of phrase) {
+    if (ch === '?') out += '\\S';
+    else if (ch === '*') out += '\\S*';
+    else if (/[.+^${}()|[\]\\]/.test(ch)) out += '\\' + ch;
+    else out += ch;
+  }
+  return out;
+}
+function cleanDescription(input, opts) {
+  let s = String(input || '');
+  if (opts.removeDates) {
+    s = s.replace(/\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/g, ' ');
+    s = s.replace(/\b\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?\b/g, ' ');
+    s = s.replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)(uary|ruary|ch|il|e|y|ust|ember|ober)?\b/gi, ' ');
+    s = s.replace(/\b(2\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\b/g, ' ');
+  }
+  if (opts.removeCurrency) {
+    s = s.replace(/\$\s?\d+(?:[.,]\d+)?/g, ' ');
+    s = s.replace(/\b\d+\.\d{2}\b/g, ' ');
+  }
+  if (opts.removePhones) s = s.replace(/\(?\b\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, ' ');
+  if (opts.removeStates) {
+    s = s.replace(new RegExp(`\\b(${AU_STATES})\\b`, 'g'), ' ');
+  }
+  if (opts.removeHashNumbers) s = s.replace(/#\s?\d+/g, ' ');
+  if (opts.customPhrases && opts.customPhrases.trim()) {
+    for (const line of opts.customPhrases.split('\n').map(l => l.trim()).filter(Boolean)) {
+      try { s = s.replace(new RegExp(wildcardToRegex(line), 'gi'), ' '); } catch (_) {}
+    }
+  }
+  if (opts.punctToSpace) s = s.replace(/[.,;:!?]/g, ' ');
+  if (opts.removeSpecial) s = s.replace(/["'()[\]/\\*+=#]/g, ' ');
+  if (opts.removeNumsFromAlpha) {
+    s = s.replace(/\S*[a-zA-Z]\S*/g, (token) => {
+      if (!/\d/.test(token)) return token;
+      const parts = (token.match(/[a-zA-Z]+/g) || []);
+      const longest = Math.max(0, ...parts.map(p => p.length));
+      if (longest < 3) return ' ';
+      return parts.filter(p => p.length >= 2).join(' ');
+    });
+  }
+  if (opts.removeShortNumbers && Number(opts.minDigits) > 0) {
+    const n = Math.max(1, Number(opts.minDigits));
+    s = s.replace(new RegExp(`\\b\\d{1,${n - 1}}\\b`, 'g'), ' ');
+  }
+  if (opts.removeLongNumbers && Number(opts.maxDigits) > 0) {
+    const n = Math.max(1, Number(opts.maxDigits));
+    s = s.replace(new RegExp(`\\b\\d{${n + 1},}\\b`, 'g'), ' ');
+  }
+  if (opts.removeExtraSpaces) s = s.replace(/\s+/g, ' ').trim();
+  if (opts.dedupeWords) {
+    const seen = new Set();
+    s = s.split(/\s+/).filter(w => { if (!w) return false; const k = w.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).join(' ');
+  }
+  if (opts.caseMode === 'upper') s = s.toUpperCase();
+  else if (opts.caseMode === 'lower') s = s.toLowerCase();
+  else if (opts.caseMode === 'title') s = s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  return s.trim();
+}
+function diffChars(original, cleaned) {
+  const out = [], orig = String(original || ''), clean = String(cleaned || '');
+  let j = 0;
+  for (let i = 0; i < orig.length; i++) {
+    if (j < clean.length && orig[i].toLowerCase() === clean[j].toLowerCase()) {
+      out.push({ ch: orig[i], removed: false }); j++;
+    } else { out.push({ ch: orig[i], removed: true }); }
+  }
+  return out;
+}
+
 function getCats(type, isPersonal) {
   if (type === 'income') return isPersonal ? INCOME_CATS_PERSONAL : INCOME_CATS_BUSINESS;
   return isPersonal ? EXPENSE_CATS_PERSONAL : EXPENSE_CATS_BUSINESS;
@@ -24,19 +113,29 @@ function defaultCat(type, isPersonal) { return getCats(type, isPersonal)[0]; }
 
 function buildRow(t, idx) {
   const importType = t.type === 'credit' ? 'income' : 'expense';
+  const isPersonal = false;
+  const cats = getCats(importType, isPersonal);
+  // Use AI-provided category if it's a valid match, else default
+  const aiCat = String(t.category || '').trim();
+  const category = cats.includes(aiCat) ? aiCat : defaultCat(importType, isPersonal);
+  // Prefer AI cleanedPayee over raw description
+  const description = String(t.cleanedPayee || t.description || '').trim() || 'Transaction';
+  const rawDescription = String(t.description || '').trim();
   return {
     _key: idx,
     include: true,
     date: t.date || new Date().toISOString().slice(0, 10),
-    description: t.description || '',
+    description,
+    rawDescription,
     amount: String(t.amount || 0),
     import_type: importType,
     is_personal: false,
-    category: defaultCat(importType, false),
+    category,
     gst_included: false,
     gst_free: false,
     gst_claimable: importType === 'expense',
     original_type: t.type,
+    cleanedDesc: null,
   };
 }
 
@@ -82,9 +181,20 @@ function RowEditor({ row, selected, onSelect, onChange, onRemove }) {
       </td>
       {/* Description */}
       <td className="px-1 py-1">
-        <input type="text" value={row.description} onChange={e => update('description', e.target.value)}
-          data-testid={`import-row-desc-${row._key}`}
-          className="w-full min-w-[140px] border border-slate-200 dark:border-slate-600 rounded px-1.5 py-1 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        {row.cleanedDesc ? (
+          <div className="relative group">
+            <div className="w-full min-w-[140px] border border-purple-200 dark:border-purple-700 rounded px-1.5 py-1 bg-purple-50/40 dark:bg-purple-900/10 text-xs font-mono leading-relaxed overflow-hidden max-w-[200px]"
+              title={`Original: ${row.rawDescription || row.description}`}>
+              {diffChars(row.rawDescription || row.description, row.cleanedDesc).map((c, k) => (
+                <span key={k} className={c.removed ? 'text-red-400 line-through opacity-60' : 'text-slate-800 dark:text-slate-100'}>{c.ch}</span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <input type="text" value={row.description} onChange={e => update('description', e.target.value)}
+            data-testid={`import-row-desc-${row._key}`}
+            className="w-full min-w-[140px] border border-slate-200 dark:border-slate-600 rounded px-1.5 py-1 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        )}
       </td>
       {/* Amount */}
       <td className="px-1 py-1">
@@ -247,6 +357,10 @@ export default function ImportReview({ open, onClose, onComplete }) {
   const [selectedKeys, setSelectedKeys] = useState(new Set());
   const [aiLoading, setAiLoading] = useState(false);
   const [aiMessage, setAiMessage] = useState('');
+  const [statementMeta, setStatementMeta] = useState(null);
+  const [cleanupOpts, setCleanupOpts] = useState(DEFAULT_CLEANUP_OPTS);
+  const [hasCleanedDesc, setHasCleanedDesc] = useState(false);
+  const [showCleanup, setShowCleanup] = useState(false);
   const csvRef = useRef();
   const pdfRef = useRef();
 
@@ -254,6 +368,7 @@ export default function ImportReview({ open, onClose, onComplete }) {
     setStep('idle'); setRows([]); setParseError('');
     setImportResult(null); setPage(0);
     setSelectedKeys(new Set()); setAiMessage('');
+    setStatementMeta(null); setHasCleanedDesc(false); setShowCleanup(false);
   };
   const handleClose = () => { reset(); onClose(); };
 
@@ -269,6 +384,9 @@ export default function ImportReview({ open, onClose, onComplete }) {
           setParseError('No transactions found in the file.'); setStep('idle'); return;
         }
         setRows(data.transactions.map((t, i) => buildRow(t, i)));
+        if (data.balances || data.statementType) {
+          setStatementMeta({ balances: data.balances, statementType: data.statementType, accountInfo: data.accountInfo });
+        }
         setPage(0); setStep('review');
       } else {
         const d = await res.json();
@@ -390,6 +508,17 @@ export default function ImportReview({ open, onClose, onComplete }) {
     setAiLoading(false);
   };
 
+  // ── Apply description cleanup pipeline ───────────────────────────────────────
+  const applyCleanup = useCallback((opts) => {
+    setRows(prev => prev.map(r => ({
+      ...r,
+      cleanedDesc: cleanDescription(r.rawDescription || r.description, opts),
+    })));
+    setCleanupOpts(opts);
+    setHasCleanedDesc(true);
+    setShowCleanup(false);
+  }, []);
+
   // ── Import ────────────────────────────────────────────────────────────────────
   const handleImport = async () => {
     const selected = rows.filter(r => r.include);
@@ -397,7 +526,9 @@ export default function ImportReview({ open, onClose, onComplete }) {
     setStep('importing');
     try {
       const transactions = selected.map(r => ({
-        date: r.date, description: r.description, amount: parseFloat(r.amount) || 0,
+        date: r.date,
+        description: r.cleanedDesc || r.description,
+        amount: parseFloat(r.amount) || 0,
         import_type: r.import_type, is_personal: r.is_personal, category: r.category,
         gst_included: r.gst_included, gst_free: r.import_type === 'income' ? r.gst_free : undefined,
         gst_claimable: r.import_type === 'expense' ? r.gst_claimable : undefined,
@@ -426,8 +557,10 @@ export default function ImportReview({ open, onClose, onComplete }) {
   const fmt = v => new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(v || 0);
 
   return (
+    <>
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-[95vw] xl:max-w-6xl max-h-[92vh] flex flex-col p-0 gap-0">
+      <DialogContent className="max-w-[95vw] xl:max-w-6xl max-h-[92vh] flex flex-col p-0 gap-0"
+        onPointerDownOutside={(e) => { if (showCleanup) e.preventDefault(); }}>
         <DialogHeader className="px-6 pt-5 pb-0">
           <DialogTitle style={{ fontFamily: 'Outfit, sans-serif' }} className="text-lg">
             Import from Bank Statement or CSV
@@ -490,6 +623,49 @@ export default function ImportReview({ open, onClose, onComplete }) {
                 </div>
               )}
 
+              {/* ── Statement meta + reconciliation (PDF LLM path only) ─────── */}
+              {statementMeta?.balances && (statementMeta.balances.beginningBalance != null || statementMeta.balances.endingBalance != null) && (() => {
+                const begin = Number(statementMeta.balances.beginningBalance) || 0;
+                const end = Number(statementMeta.balances.endingBalance) || 0;
+                const netChange = rows.filter(r => r.include).reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+                const calcEnd = begin + netChange;
+                const delta = Math.abs(calcEnd - end);
+                const reconciles = delta < 0.02;
+                const fmt = v => new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(v);
+                return (
+                  <div className="mb-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    {statementMeta.accountInfo?.bankName && (
+                      <div className="col-span-2 sm:col-span-4 flex items-center gap-2 text-slate-500 dark:text-slate-400 mb-1">
+                        <Info className="w-3.5 h-3.5" />
+                        <span className="font-medium text-slate-700 dark:text-slate-300">{statementMeta.accountInfo.bankName}</span>
+                        {statementMeta.accountInfo.accountNumberLast4 && <span>•• {statementMeta.accountInfo.accountNumberLast4}</span>}
+                        <span className="ml-1 px-1.5 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-slate-500 dark:text-slate-400">
+                          {statementMeta.statementType === 'credit_card' ? 'Credit Card' : 'Bank Account'}
+                        </span>
+                      </div>
+                    )}
+                    <div className="bg-slate-50 dark:bg-slate-800 rounded-lg px-3 py-2 border border-slate-200 dark:border-slate-700">
+                      <div className="text-slate-500 dark:text-slate-400">Opening Balance</div>
+                      <div className="font-semibold font-mono text-slate-800 dark:text-white">{fmt(begin)}</div>
+                    </div>
+                    <div className="bg-slate-50 dark:bg-slate-800 rounded-lg px-3 py-2 border border-slate-200 dark:border-slate-700">
+                      <div className="text-slate-500 dark:text-slate-400">Closing Balance</div>
+                      <div className="font-semibold font-mono text-slate-800 dark:text-white">{fmt(end)}</div>
+                    </div>
+                    <div className="bg-slate-50 dark:bg-slate-800 rounded-lg px-3 py-2 border border-slate-200 dark:border-slate-700">
+                      <div className="text-slate-500 dark:text-slate-400">Transactions</div>
+                      <div className="font-semibold text-slate-800 dark:text-white">{rows.length} found</div>
+                    </div>
+                    <div className={`rounded-lg px-3 py-2 border ${reconciles ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700' : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700'}`}>
+                      <div className="text-slate-500 dark:text-slate-400">Reconciliation</div>
+                      <div className={`font-semibold flex items-center gap-1 ${reconciles ? 'text-green-700 dark:text-green-400' : 'text-amber-700 dark:text-amber-400'}`}>
+                        {reconciles ? <><Check className="w-3.5 h-3.5" /> Balanced</> : <>Off by {fmt(delta)}</>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* ── AI Categorize bar ──────────────────────────────────────── */}
               <div className="flex flex-wrap items-center gap-3 mb-3 p-3 bg-gradient-to-r from-indigo-50 to-blue-50 dark:from-indigo-900/20 dark:to-blue-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl">
                 <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -502,6 +678,11 @@ export default function ImportReview({ open, onClose, onComplete }) {
                     }
                   </div>
                 </div>
+                <button data-testid="clean-desc-btn" onClick={() => setShowCleanup(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm flex-shrink-0">
+                  <Settings2 className="w-3.5 h-3.5" />
+                  {hasCleanedDesc ? 'Re-clean Descriptions' : 'Clean Descriptions'}
+                </button>
                 <button data-testid="ai-categorize-btn" onClick={handleAICategorize} disabled={aiLoading}
                   className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm flex-shrink-0">
                   {aiLoading
@@ -679,5 +860,131 @@ export default function ImportReview({ open, onClose, onComplete }) {
         )}
       </DialogContent>
     </Dialog>
+    {showCleanup && ReactDOM.createPortal(
+      <CleanupModal
+        initial={cleanupOpts}
+        sample={rows.slice(0, 3)}
+        onCancel={() => setShowCleanup(false)}
+        onApply={applyCleanup}
+      />,
+      document.body
+    )}
+  </>
+  );
+}
+
+// ─── Cleanup Modal ────────────────────────────────────────────────────────────
+function CleanupModal({ initial, sample, onCancel, onApply }) {
+  const [opts, setOpts] = useState(initial);
+  const set = (k, v) => setOpts(o => ({ ...o, [k]: v }));
+
+  const preview = useMemo(() =>
+    sample.map(t => ({
+      original: t.rawDescription || t.description,
+      cleaned: cleanDescription(t.rawDescription || t.description, opts)
+    })),
+    [sample, opts]
+  );
+
+  const Toggle = ({ k, label, children }) => (
+    <label className="flex items-center gap-2 text-sm py-1 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 rounded px-1">
+      <input type="checkbox" checked={!!opts[k]} onChange={e => set(k, e.target.checked)} className="rounded accent-blue-600" />
+      <span className="flex-1 text-slate-700 dark:text-slate-300">{label}</span>
+      {children}
+    </label>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col border border-slate-200 dark:border-slate-700">
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Settings2 className="h-5 w-5 text-purple-600" />
+            <h2 className="font-semibold text-slate-800 dark:text-white">Clean Descriptions</h2>
+            <span className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">strips bank codes, IDs, dates</span>
+          </div>
+          <button onClick={onCancel} className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"><X className="h-5 w-5" /></button>
+        </div>
+        {/* Body */}
+        <div className="flex-1 overflow-auto p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* Left: toggles */}
+          <div className="space-y-3">
+            <section>
+              <h3 className="text-xs font-semibold uppercase text-slate-400 mb-1 tracking-wide">Core cleanup</h3>
+              <Toggle k="removeDates" label="Remove dates (3/14, 03-14-26, Jan)" />
+              <Toggle k="removeCurrency" label="Remove currency values ($12.34)" />
+              <Toggle k="removePhones" label="Remove phone numbers" />
+              <Toggle k="removeStates" label="Remove AU state codes (NSW, VIC, QLD…)" />
+              <Toggle k="removeHashNumbers" label="Remove #-prefixed numbers (#1234)" />
+              <Toggle k="punctToSpace" label="Replace punctuation with spaces" />
+              <Toggle k="removeSpecial" label='Remove special chars " ( ) [ ] / \ * + = #' />
+              <Toggle k="removeNumsFromAlpha" label="Strip digits from mixed tokens (TST123 → TST)" />
+              <Toggle k="removeShortNumbers" label="Remove numbers shorter than">
+                <input type="number" min="1" max="20" value={opts.minDigits}
+                  onChange={e => set('minDigits', parseInt(e.target.value) || 1)}
+                  onClick={e => e.stopPropagation()}
+                  className="w-12 border border-slate-300 dark:border-slate-600 rounded px-1 py-0.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+                <span className="text-xs text-slate-500">digits</span>
+              </Toggle>
+              <Toggle k="removeLongNumbers" label="Remove numbers longer than">
+                <input type="number" min="1" max="50" value={opts.maxDigits}
+                  onChange={e => set('maxDigits', parseInt(e.target.value) || 1)}
+                  onClick={e => e.stopPropagation()}
+                  className="w-12 border border-slate-300 dark:border-slate-600 rounded px-1 py-0.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+                <span className="text-xs text-slate-500">digits</span>
+              </Toggle>
+              <Toggle k="removeExtraSpaces" label="Collapse extra whitespace" />
+              <Toggle k="dedupeWords" label="Remove repeated words" />
+            </section>
+            <section>
+              <h3 className="text-xs font-semibold uppercase text-slate-400 mb-1 tracking-wide">Case</h3>
+              {[{ v: 'none', label: 'Leave as-is' }, { v: 'upper', label: 'UPPER CASE' }, { v: 'title', label: 'Title Case' }, { v: 'lower', label: 'lower case' }].map(c => (
+                <label key={c.v} className="flex items-center gap-2 text-sm py-0.5 cursor-pointer text-slate-700 dark:text-slate-300">
+                  <input type="radio" name="case" checked={opts.caseMode === c.v} onChange={() => set('caseMode', c.v)} className="accent-blue-600" />
+                  {c.label}
+                </label>
+              ))}
+            </section>
+          </div>
+          {/* Right: custom phrases + preview */}
+          <div className="space-y-4">
+            <section>
+              <h3 className="text-xs font-semibold uppercase text-slate-400 mb-1 tracking-wide">Custom phrases to remove</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">One per line. <code className="bg-slate-100 dark:bg-slate-700 px-1 rounded">?</code> = one char, <code className="bg-slate-100 dark:bg-slate-700 px-1 rounded">*</code> = multiple chars.</p>
+              <textarea value={opts.customPhrases} onChange={e => set('customPhrases', e.target.value)} rows={8}
+                className="w-full border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 text-xs font-mono resize-y bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+                spellCheck={false} />
+            </section>
+            <section>
+              <h3 className="text-xs font-semibold uppercase text-slate-400 mb-1 tracking-wide">Live preview</h3>
+              {preview.length === 0 && <p className="text-xs text-slate-500">No transactions to preview.</p>}
+              <div className="space-y-2">
+                {preview.map((p, i) => (
+                  <div key={i} className="text-xs border border-slate-200 dark:border-slate-700 rounded p-2 bg-slate-50 dark:bg-slate-800">
+                    <div className="text-slate-400 line-through truncate">{p.original}</div>
+                    <div className="text-purple-700 dark:text-purple-300 font-semibold truncate">{p.cleaned || <em className="text-slate-400">(empty)</em>}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        </div>
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-800/60">
+          <button onClick={() => setOpts(DEFAULT_CLEANUP_OPTS)}
+            className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1">
+            <RefreshCw className="h-3.5 w-3.5" /> Reset defaults
+          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={onCancel} className="text-sm px-4 py-1.5 rounded border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300">Cancel</button>
+            <button onClick={() => onApply(opts)} data-testid="cleanup-apply-btn"
+              className="text-sm px-4 py-1.5 rounded bg-purple-600 hover:bg-purple-700 text-white font-semibold shadow-sm">
+              Apply to all rows
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

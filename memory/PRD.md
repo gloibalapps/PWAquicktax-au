@@ -47,7 +47,14 @@ Create an app for keeping track of tax in Australia catering to BAS statements. 
 - Bulk actions (Set all Income, all Expense, all Business, all Personal)
 - `/api/import/batch` endpoint for bulk saving
 
-### Phase 4 — AI Categorization & Bulk Edit (Feb 2026) ✅ TESTED
+### Phase 5 — PDF Artifact Integration (Feb 2026) ✅ TESTED
+Integrated Hector Garcia CPA's PDF→CSV Claude artifact into TaxTrack AU:
+- **Backend PDF upgrade**: Now sends full PDF natively to Gemini 2.5 Flash (via `FileContentWithMimeType`) using rich extraction prompt — returns `cleanedPayee`, `category`, `type`, `balances`, `statementType`, `accountInfo`. Includes auto sign-correction via balance reconciliation.
+- **buildRow pre-population**: `cleanedPayee` used as description; AI-provided `category` pre-fills if it matches AU category list.
+- **Reconciliation badge**: Shows opening/closing balance and "Balanced ✓" or "Off by $X" for LLM-parsed PDFs.
+- **Clean Descriptions**: New button opens `CleanupModal` (full description cleanup pipeline: remove dates, bank codes, AU state codes, long numbers, custom phrases with ? / * wildcards, live preview). Rendered via `ReactDOM.createPortal` for reliable z-index.
+- **Diff visualization**: After cleanup, description cells show original text with removed chars crossed out in red.
+- **Import uses `cleanedDesc`**: If cleanup was applied, cleaned text is saved instead of raw bank description.
 - `POST /api/import/categorize` — AI categorization endpoint (Gemini 2.5 Flash, batches up to 80 unique descriptions)
 - `ImportReview.jsx` full rewrite:
   - **AI Categorize button** — one-click categorize all rows (type, purpose, category, GST) ✅

@@ -152,6 +152,10 @@ class PropertyCreate(BaseModel):
     purchase_price: float
     loan_amount: Optional[float] = None
     weekly_rent: Optional[float] = None
+    construction_cost: Optional[float] = None
+    construction_date: Optional[str] = None
+    plant_equipment_value: Optional[float] = None
+    depreciation_method: Optional[str] = "prime_cost"
     notes: Optional[str] = None
 
 class PropertyTransactionCreate(BaseModel):
@@ -1216,6 +1220,55 @@ async def list_properties(user: dict = Depends(require_premium)):
     items = await db.properties.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(1000)
     return items
 
+@api_router.get("/properties/summary")
+async def get_portfolio_summary(user: dict = Depends(require_premium)):
+    """Aggregated portfolio stats across all properties."""
+    props = await db.properties.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(1000)
+    fy = get_fy(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    fy_start = f"{fy - 1}-07-01"
+    fy_end = f"{fy}-06-30"
+    
+    total_value = sum(p.get("purchase_price", 0) or 0 for p in props)
+    total_loans = sum(p.get("loan_amount", 0) or 0 for p in props)
+    total_equity = total_value - total_loans
+    annual_rent = sum((p.get("weekly_rent", 0) or 0) * 52 for p in props)
+    
+    # Div 43 depreciation: 2.5%/yr of construction cost
+    total_div43 = 0.0
+    for p in props:
+        cc = p.get("construction_cost") or 0
+        cd = p.get("construction_date") or p.get("purchase_date") or ""
+        if cc and cd:
+            try:
+                from datetime import date as _date
+                build_date = _date.fromisoformat(cd)
+                today = _date.today()
+                years_held = (today - build_date).days / 365.25
+                if years_held < 40:
+                    total_div43 += cc * 0.025
+            except Exception:
+                pass
+    
+    # FY transactions summary
+    txns = await db.property_transactions.find(
+        {"user_id": user["user_id"], "date": {"$gte": fy_start, "$lte": fy_end}}, {"_id": 0}
+    ).to_list(100000)
+    fy_income = sum(t.get("amount", 0) for t in txns if t.get("transaction_type") == "income")
+    fy_expenses = sum(t.get("amount", 0) for t in txns if t.get("transaction_type") == "expense")
+    
+    return {
+        "property_count": len(props),
+        "total_portfolio_value": total_value,
+        "total_loans": total_loans,
+        "total_equity": total_equity,
+        "annual_rental_income": annual_rent,
+        "total_div43_depreciation": total_div43,
+        "fy": fy,
+        "fy_income": fy_income,
+        "fy_expenses": fy_expenses,
+        "fy_net": fy_income - fy_expenses,
+    }
+
 @api_router.post("/properties")
 async def create_property(data: PropertyCreate, user: dict = Depends(require_premium)):
     property_id = f"prop_{uuid.uuid4().hex[:12]}"
@@ -1228,6 +1281,10 @@ async def create_property(data: PropertyCreate, user: dict = Depends(require_pre
         "purchase_price": data.purchase_price,
         "loan_amount": data.loan_amount,
         "weekly_rent": data.weekly_rent,
+        "construction_cost": data.construction_cost,
+        "construction_date": data.construction_date,
+        "plant_equipment_value": data.plant_equipment_value,
+        "depreciation_method": data.depreciation_method or "prime_cost",
         "notes": data.notes,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),

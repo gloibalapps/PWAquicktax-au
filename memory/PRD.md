@@ -47,7 +47,15 @@ Create an app for keeping track of tax in Australia catering to BAS statements. 
 - Bulk actions (Set all Income, all Expense, all Business, all Personal)
 - `/api/import/batch` endpoint for bulk saving
 
-### Phase 5 — PDF Artifact Integration (Feb 2026) ✅ TESTED
+### Phase 6 — Property Tracking (Feb 2026) ✅ TESTED
+Premium-gated property tracker fully implemented:
+- **Portfolio Summary Bar**: Total portfolio value, total equity, annual rental income, FY Div 43 depreciation estimate
+- **Property CRUD**: Full add/edit/delete with fields: address, type, purchase date, purchase price, loan amount, weekly rent, construction cost, construction date, plant & equipment value, depreciation method
+- **3-Tab Property Detail**: Transactions | Depreciation | Details
+- **Depreciation Calculator (ATO)**: Div 43 (2.5%/yr of construction cost, 40-year window, progress bar) + Div 40 (plant & equipment, prime cost or diminishing value)
+- **Negative gearing indicator**: FY cashflow shows "Negative Gearing" / "Positive" based on income vs expenses
+- **Backend**: `/api/properties/summary` endpoint, all CRUD endpoints premium-gated (403 for free users)
+- **Testing**: 100% (7/7 backend + all frontend flows passing)
 Integrated Hector Garcia CPA's PDF→CSV Claude artifact into TaxTrack AU:
 - **Backend PDF upgrade**: Now sends full PDF natively to Gemini 2.5 Flash (via `FileContentWithMimeType`) using rich extraction prompt — returns `cleanedPayee`, `category`, `type`, `balances`, `statementType`, `accountInfo`. Includes auto sign-correction via balance reconciliation.
 - **buildRow pre-population**: `cleanedPayee` used as description; AI-provided `category` pre-fills if it matches AU category list.

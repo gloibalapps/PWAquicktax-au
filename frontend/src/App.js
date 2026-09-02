@@ -13,6 +13,7 @@ import Expenses from '@/pages/Expenses';
 import BAS from '@/pages/BAS';
 import Properties from '@/pages/Properties';
 import Settings from '@/pages/Settings';
+import InstallPrompt from '@/components/InstallPrompt';
 
 function AppRouter() {
   const location = useLocation();
@@ -44,6 +45,7 @@ function App() {
         <div className="App">
           <BrowserRouter>
             <AppRouter />
+            <InstallPrompt />
           </BrowserRouter>
         </div>
       </AuthProvider>

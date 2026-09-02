@@ -47,7 +47,16 @@ Create an app for keeping track of tax in Australia catering to BAS statements. 
 - Bulk actions (Set all Income, all Expense, all Business, all Personal)
 - `/api/import/batch` endpoint for bulk saving
 
-### Phase 7 — CGT Estimate Tab (Feb 2026) ✅ TESTED
+### Phase 8 — PWA (Feb 2026) ✅ TESTED
+TaxTrack AU is now a fully installable Progressive Web App:
+- **manifest.json**: name, short_name, icons (192/512/apple-touch), theme_color=#1d4ed8, display=standalone, 3 shortcuts (Dashboard, Add Expense, BAS)
+- **service-worker.js**: cache-first for static assets, network-first + stale fallback for API calls, offline page fallback for navigation
+- **offline.html**: Branded offline page with "Try Again" reload button
+- **index.html**: Updated with theme-color, manifest link, apple-touch-icon, apple-mobile-web-app-capable, correct title
+- **InstallPrompt.jsx**: "Add to Home Screen" bottom banner — native prompt for Android/Chrome, manual share instructions for iOS Safari. Dismissed state in localStorage.
+- **App.js**: InstallPrompt rendered globally at root
+- **SW auto-registered** in index.js on window load event
+- Verified: SW registered=true, manifest live, all assets cached
 Full Australian CGT calculator integrated into each property's detail view:
 - **New backend fields**: `current_market_value`, `acquisition_costs`, `capital_improvements` on PropertyCreate
 - **Holding period timeline**: Visual bar from purchase date → today, shows years held, 50% discount eligibility badge (green if ≥ 12 months, amber if not yet)
